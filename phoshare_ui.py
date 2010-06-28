@@ -32,13 +32,14 @@ import Queue
 
 
 class ExportApp(Frame):
+    """GUI version of the phoshare tool."""
 
     def __init__(self, options, master=None):
         """Initialize the app, setting up the UI."""
         Frame.__init__(self, master, bd=10)
 
         self.thread_queue = Queue.Queue(maxsize=100)
-        self.export_running = None
+        self.active_library = None
         
         top = self.winfo_toplevel()
         top.columnconfigure(0, weight=1)
@@ -96,6 +97,17 @@ class ExportApp(Frame):
             self.face_albums_var.set(1)
             self.face_albums_text.set(options.facealbums)
 
+        self.iptc_var = IntVar()
+        self.iptc_all_var = IntVar()
+        if options.iptc:
+            self.iptc_var.set(1)
+            if options.iptc == 2:
+                self.iptc_all_var.set(1)
+
+        self.gps_var = IntVar()
+        if options.gps:
+            self.gps_var.set(1)
+
         self.create_widgets()
 
         if options.iphoto:
@@ -108,18 +120,18 @@ class ExportApp(Frame):
             self.export_folder.set("~/Pictures/Album")
 
         # More defaults to load:
-        # self.nametemplate = "${caption}"
         # self.size = None  # TODO
         # self.picasa = False  # TODO
         # self.movies = True  # TODO
-        # self.iptc = 0  # TODO
-        # self.gps = False  # TODO
 
     def init(self):
-        self.threadChecker()                
+        """Initializes processing by launching background thread checker and 
+           initial iPhoto library check."""
+        self.thread_checker()                
         self.check_iphoto_library()
 
     def create_widgets(self):
+        """Builds the UI."""
         bold_font = ('helvetica', 12, 'bold')
         self.columnconfigure(2, weight=1)
         row = 0
@@ -131,7 +143,8 @@ class ExportApp(Frame):
         self.browse_library_button.grid(row=row, column=3)
 
         row += 1
-        self.library_status = Label(self, textvariable=self.iphoto_library_status)
+        self.library_status = Label(self, 
+                                    textvariable=self.iphoto_library_status)
         self.library_status.grid(row=row, column=1, columnspan=2, sticky=W)
 
         row += 1
@@ -164,29 +177,35 @@ class ExportApp(Frame):
         label.grid(sticky=E)
         export_folder_entry = Entry(self, textvariable=self.export_folder)
         export_folder_entry.grid(row=row, column=1, columnspan=2, sticky=E+W)
-        Button(self, text="Browse...", command=self.browse_export).grid(row=row, column=3)
+        Button(self, text="Browse...", 
+               command=self.browse_export).grid(row=row, column=3)
 
         row += 1
-        update_box = Checkbutton(self, text="Overwrite changed pictures", var=self.update_var)
+        update_box = Checkbutton(self, text="Overwrite changed pictures", 
+                                 var=self.update_var)
         update_box.grid(row=row, column=1, sticky=W)
-        originals_box = Checkbutton(self, text="Export originals", var=self.originals_var)
+        originals_box = Checkbutton(self, text="Export originals", 
+                                    var=self.originals_var)
         originals_box.grid(row=row, column=2, sticky=W)
-        hint_box = Checkbutton(self, text="Use folder hints", var=self.folder_hints_var)
+        hint_box = Checkbutton(self, text="Use folder hints", 
+                               var=self.folder_hints_var)
         hint_box.grid(row=row, column=3, sticky=W)
 
         row += 1
-        delete_box = Checkbutton(self, text="Delete obsolete pictures", var=self.delete_var)
+        delete_box = Checkbutton(self, text="Delete obsolete pictures", 
+                                 var=self.delete_var)
         delete_box.grid(row=row, column=1, sticky=W)
         link_box = Checkbutton(self, text="Use file links", var=self.link_var)
         link_box.grid(row=row, column=2, columnspan=2, sticky=W)
 
         row += 1
-        label = Label(self, text="Faces and places")
+        label = Label(self, text="Faces")
         label.config(font=bold_font)
         label.grid(row=row, column=0, columnspan=4, sticky=W)
 
         row += 1
-        checkbutton = Checkbutton(self, text="Export faces into folders", var=self.face_albums_var)
+        checkbutton = Checkbutton(self, text="Export faces into folders", 
+                                  var=self.face_albums_var)
         checkbutton.grid(row=row, column=1, sticky=W)
         label = Label(self, text="Faces folder prefix:")
         label.grid(row=row, column=2, sticky=E)
@@ -194,10 +213,13 @@ class ExportApp(Frame):
         entry.grid(row=row, column=3, sticky=E+W)
 
         row += 1
-        faces_box = Checkbutton(self, text="Copy faces into metadata", var=self.faces_var)
+        faces_box = Checkbutton(self, text="Copy faces into metadata", 
+                                var=self.faces_var)
         faces_box.grid(row=row, column=1, sticky=W)
         
-        face_keywords_box = Checkbutton(self, text="Copy face namess into keywords", var=self.face_keywords_var)
+        face_keywords_box = Checkbutton(self, 
+                                        text="Copy face namess into keywords", 
+                                        var=self.face_keywords_var)
         face_keywords_box.grid(row=row, column=2, columnspan=2, sticky=W)
 
         row += 1
@@ -206,9 +228,29 @@ class ExportApp(Frame):
         label.grid(row=row, column=0, columnspan=4, sticky=W)
 
         row += 1
-        self.dryrun_button = Button(self, text="Dry Run", command=self.do_dryrun, state=DISABLED)
+        iptc_box = Checkbutton(self,
+                               text=("Export metadata (descriptions, "
+                                     "keywords, ratings, dates)"),
+                               var=self.iptc_var)
+        iptc_box.grid(row=row, column=1, columnspan=3, sticky=W)
+
+        row += 1
+        iptc_all_box = Checkbutton(self,
+                                   text="Verify existing images",
+                                   var=self.iptc_all_var)
+        iptc_all_box.grid(row=row, column=1, sticky=W)
+
+        gps_box = Checkbutton(self,
+                              text="Export GPS data",
+                              var=self.gps_var)
+        gps_box.grid(row=row, column=2, sticky=W)
+
+        row += 1
+        self.dryrun_button = Button(self, text="Dry Run", 
+                                    command=self.do_dryrun, state=DISABLED)
         self.dryrun_button.grid(row=row, column=2, stick=E)
-        self.export_button = Button(self, text="Export", command=self.do_export, state=DISABLED)
+        self.export_button = Button(self, text="Export", 
+                                    command=self.do_export, state=DISABLED)
         self.export_button.grid(row=row, column=3)
 
         row += 1
@@ -251,7 +293,7 @@ class ExportApp(Frame):
         self.export_folder.set(path)
 
     def do_export(self):
-        if self.export_running:
+        if self.active_library:
             self.stop_thread()
             return
         if not self.can_export():
@@ -261,7 +303,7 @@ class ExportApp(Frame):
         self.run_export(False)
 
     def do_dryrun(self):
-        if self.export_running:
+        if self.active_library:
             self.stop_thread()
             return
         if not self.can_export():
@@ -271,18 +313,18 @@ class ExportApp(Frame):
         self.run_export(True)
 
     def stop_thread(self):
-        tkMessageBox.showerror(
-            "Stop Export",
-            "Sorry, it is currently not possible to interrupt an ongoing export operation.")
+        if self.active_library:
+            self.active_library.abort()
         
     def export_done(self):
+        self.active_library = None
         self.dryrun_button.config(text="Dry Run")
         self.export_button.config(text="Export")
         self.enable_buttons()
 
     class Options(object):
-        """Simple helper to create an object compatible with the OptionParser output in
-           phoshare.py."""
+        """Simple helper to create an object compatible with the OptionParser 
+        output in phoshare.py."""
 
         def __init__(self):
             self.albums = None
@@ -298,17 +340,19 @@ class ExportApp(Frame):
             self.picasa = False  # TODO
             self.movies = True  # TODO
             self.originals = False
-            self.iptc = 0  # TODO
-            self.gps = False  # TODO
+            self.iptc = 0
+            self.gps = False
             self.faces = False
             self.facealbums = None
             self.face_keywords = False
 
     def can_export(self):
-        if not self.albums.get() and not self.events.get() and not self.smarts.get():
+        if (not self.albums.get() and not self.events.get() and 
+            not self.smarts.get()):
             tkMessageBox.showerror(
                 "Export Error",
-                "Need to specify at least one event, album, or smart album for exporting.")
+                ("Need to specify at least one event, album, or smart album "
+                 "for exporting."))
             return False
         return True
 
@@ -326,9 +370,9 @@ class ExportApp(Frame):
         """
         self.text.delete('1.0', END)
         self.browse_library_button.config(state=DISABLED)
-        self.export_running = threading.Thread(target=self.export_thread,
-                                               args=(mode,))
-        self.export_running.start()
+        export_thread = threading.Thread(target=self.export_thread,
+                                         args=(mode,))
+        export_thread.start()
 
     def export_thread(self, mode):
         """Run an export operation in a thread, to not block the UI.
@@ -368,20 +412,28 @@ class ExportApp(Frame):
             options.folderhints = self.folder_hints_var.get() == 1
             options.faces = self.faces_var.get() == 1
             options.face_keywords = self.face_keywords_var.get() == 1
+            if self.iptc_all_var.get() == 1:
+                options.iptc = 2
+            elif self.iptc_var.get() == 1:
+                options.iptc = 1
+            else:
+                options.iptc = 0
+            options.gps = self.gps_var.get()
             if self.face_albums_var.get():
                 options.facealbums = self.face_albums_text.get()
             
             exclude = None # TODO
 
             exclude_folders = []  # TODO
-            phoshare.export_iphoto(data, export_folder, exclude, exclude_folders,
-                                   options)
+            self.active_library = phoshare.ExportLibrary(export_folder)
+            self.active_library.export_iphoto(data, exclude, 
+                                              exclude_folders, options)
             self.thread_queue.put(("done", (True, mode, '')))
         except Exception, e:
             self.thread_queue.put(("done", (False, mode, str(e))))
             print >> sys.stderr, e
         
-    def threadChecker(self, delayMsecs=100):        # 10x per second
+    def thread_checker(self, delay_ms=100):        # 10x per second
         """Processes any queued up messages in the thread queue. Once the queue
         is empty, schedules another check after a short delay.
 
@@ -413,12 +465,11 @@ class ExportApp(Frame):
                     self.set_library_status(success, msg)
                 else:
                     self.export_done()
-                self.export_running = None
             except Queue.Empty:
                 break
 
         # Check the queue again after a short delay.
-        self.after(delayMsecs, self.threadChecker)
+        self.after(delay_ms, self.thread_checker)
 
     def write(self, text):
         """Writes text to the progress area of the UI. Uses the thread queue,
@@ -432,9 +483,10 @@ class ExportApp(Frame):
             self.write(line)     
 
 
-def main(args):
+def main():
     """main routine for phoshare_ui."""
-    (options, args) = phoshare.parseArgs()
+    parser = phoshare.getOptionParser()
+    (options, args) = parser.parse_args()
     app = ExportApp(options)
     app.master.title("phoshare 2.0 Beta")
     sys.stdout = app
@@ -442,4 +494,4 @@ def main(args):
     app.mainloop()
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    main()
