@@ -104,3 +104,9 @@ def issamefile(file1, file2):
     return filecmp.cmp(file1, file2, False)
 
 
+def expand_home_folder(path):
+    """Checks if path starts with ~ and expands it to the actual
+       home folder."""
+    if path.startswith("~"):
+        return os.environ.get('HOME') + path[1:]
+    return path

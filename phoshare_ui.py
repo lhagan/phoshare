@@ -24,29 +24,62 @@ import tkMessageBox
 from Tkinter import *  #IGNORE:W0401
 
 import appledata.iphotodata as iphotodata
-import phoshare
+import Phoshare
+import tilutil.exiftool as exiftool
+import tilutil.systemutils as su
 
 from ScrolledText import ScrolledText
 
+import ConfigParser
 import Queue
 
+_PHOSHARE_VERSION = 'Phoshare 1.0'
+_CONFIG_PATH = su.expand_home_folder('~/Library/Application Support/Google/'
+                                     'Phoshare/phoshare.cfg')
+
+def _int_from_bool(boolean_value):
+    """Converts a boolean value to an integer of 0 or 1."""
+    if boolean_value:
+        return 1
+    return 0
+
+class HelpDialog(Toplevel):
+    """Displays a help dialog, using a scrolled text area."""
+
+    def __init__(self, parent, text, title="Phoshare Help"):
+        Toplevel.__init__(self, parent)
+        self.transient(parent)
+        self.title(title)
+        self.parent = parent
+        t = ScrolledText(self)
+        t.insert(END, text)
+        t.config(state=DISABLED)
+        t.pack()
 
 class ExportApp(Frame):
     """GUI version of the phoshare tool."""
 
-    def __init__(self, options, master=None):
+    def __init__(self, master=None):
         """Initialize the app, setting up the UI."""
         Frame.__init__(self, master, bd=10)
+
+        top = self.winfo_toplevel()
+        menuBar = Menu(top)
+        top["menu"] = menuBar
+        
+        subMenu = Menu(menuBar)
+        menuBar.add_cascade(label="Help", menu=subMenu)
+        subMenu.add_command(label="About Phoshare", command=self.__aboutHandler)
 
         self.thread_queue = Queue.Queue(maxsize=100)
         self.active_library = None
         
-        top = self.winfo_toplevel()
         top.columnconfigure(0, weight=1)
         top.rowconfigure(0, weight=1)
         self.grid(sticky=N+S+E+W)
 
         self.valid_library = False
+        self.exiftool = False
 
         self.iphoto_library = StringVar()
         self.iphoto_library_status = StringVar()
@@ -59,76 +92,73 @@ class ExportApp(Frame):
         self.text = None
 
         self.events = StringVar()
-        if options.events:
-            self.events.set(options.events)
-        else:
-            self.events.set(".")
         self.albums = StringVar()
-        if options.albums:
-            self.albums.set(options.albums)
         self.smarts = StringVar()
-        if options.smarts:
-            self.smarts.set(options.smarts)
 
         self.update_var = IntVar()
-        if options.update:
-            self.update_var.set(1)
         self.delete_var = IntVar()
-        if options.delete:
-            self.delete_var.set(1)
         self.originals_var = IntVar()
-        if options.originals:
-            self.originals_var.set(1)
         self.link_var = IntVar()
-        if options.link:
-            self.link_var.set(1)
         self.folder_hints_var = IntVar()
-        if options.folderhints:
-            self.folder_hints_var.set(1)
         self.faces_var = IntVar()
-        if options.faces:
-            self.faces_var.set(1)
         self.face_keywords_var = IntVar()
-        if options.face_keywords:
-            self.face_keywords_var.set(1)
         self.face_albums_var = IntVar()
         self.face_albums_text = StringVar()
-        if options.facealbums:
-            self.face_albums_var.set(1)
-            self.face_albums_text.set(options.facealbums)
 
         self.iptc_var = IntVar()
         self.iptc_all_var = IntVar()
-        if options.iptc:
-            self.iptc_var.set(1)
-            if options.iptc == 2:
-                self.iptc_all_var.set(1)
 
         self.gps_var = IntVar()
-        if options.gps:
-            self.gps_var.set(1)
 
         self.create_widgets()
 
-        if options.iphoto:
-            self.iphoto_library.set(options.iphoto)
-        else:
-            self.iphoto_library.set("~/Pictures/iPhoto Library")
-        if options.export:
-            self.export_folder.set(options.export)
-        else:
-            self.export_folder.set("~/Pictures/Album")
+    def __aboutHandler(self):
+        HelpDialog(self, """       %s
 
-        # More defaults to load:
-        # self.size = None  # TODO
-        # self.picasa = False  # TODO
-        # self.movies = True  # TODO
+  Copyright 2010 Google Inc.
+
+http://code.google.com/p/phoshare""" % (_PHOSHARE_VERSION),
+                   title="About Phoshare")
 
     def init(self):
         """Initializes processing by launching background thread checker and 
            initial iPhoto library check."""
-        self.thread_checker()                
+        self.thread_checker()
+        if exiftool.check_exif_tool(sys.stdout):
+            self.exiftool = True
+            self.faces_box.configure(state=NORMAL)
+            self.face_keywords_box.configure(state=NORMAL)
+            self.iptc_box.configure(state=NORMAL)
+            self.iptc_all_box.configure(state=NORMAL)
+            self.gps_box.configure(state=NORMAL)
+
+        options = self.Options()
+        options.load()      
+        self.init_from_options(options)
         self.check_iphoto_library()
+
+    def init_from_options(self, options):
+        """Populates the UI from options."""
+        self.iphoto_library.set(options.iphoto)
+        self.export_folder.set(options.export)
+        self.albums.set(options.albums)
+        self.events.set(options.events)
+        self.smarts.set(options.smarts)
+        self.update_var.set(_int_from_bool(options.update))
+        self.delete_var.set(_int_from_bool(options.delete))
+        self.originals_var.set(_int_from_bool(options.originals))
+        self.link_var.set(_int_from_bool(options.link))
+        self.folder_hints_var.set(_int_from_bool(options.folderhints))
+        self.faces_var.set(_int_from_bool(options.faces) and self.exiftool)
+        self.face_keywords_var.set(_int_from_bool(options.face_keywords) and
+                                   self.exiftool)
+        self.face_albums_var.set(_int_from_bool(options.facealbums))
+        self.face_albums_text.set(options.facealbum_prefix)
+        if options.iptc and self.exiftool:
+            self.iptc_var.set(1)
+            if options.iptc == 2:
+                self.iptc_all_var.set(1)
+        self.gps_var.set(_int_from_bool(options.gps) and self.exiftool)
 
     def create_widgets(self):
         """Builds the UI."""
@@ -150,7 +180,10 @@ class ExportApp(Frame):
         row += 1
         label = Label(self, text="Events, Albums and Smart Albums")
         label.config(font=bold_font)
-        label.grid(row=row, column=0, columnspan=4, sticky=W)
+        label.grid(row=row, column=0, columnspan=3, sticky=W)
+
+        Button(self, bitmap='question',
+               command=self.help_events).grid(row=row, column=3, sticky=E)
 
         row += 1
         Label(self, text="Events:").grid(sticky=E)
@@ -171,6 +204,9 @@ class ExportApp(Frame):
         label = Label(self, text="Export Folder and Options")
         label.config(font=bold_font)
         label.grid(row=row, column=0, columnspan=4, sticky=W)
+
+        Button(self, bitmap='question',
+               command=self.help_export).grid(row=row, column=3, sticky=E)
 
         row += 1
         label = Label(self, text="Export Folder:")
@@ -202,6 +238,21 @@ class ExportApp(Frame):
         label = Label(self, text="Faces")
         label.config(font=bold_font)
         label.grid(row=row, column=0, columnspan=4, sticky=W)
+        Button(self, bitmap='question',
+               command=self.help_faces).grid(row=row, column=3, sticky=E)
+
+        row += 1
+        self.faces_box = Checkbutton(self, text="Copy faces into metadata", 
+                                     var=self.faces_var, state=DISABLED,
+                                     command=self.change_metadata_box)
+        self.faces_box.grid(row=row, column=1, sticky=W)
+
+        self.face_keywords_box = Checkbutton(self, 
+                                             text="Copy face namess into keywords", 
+                                             var=self.face_keywords_var,
+                                             command=self.change_metadata_box,
+                                             state=DISABLED)
+        self.face_keywords_box.grid(row=row, column=2, columnspan=2, sticky=W)
 
         row += 1
         checkbutton = Checkbutton(self, text="Export faces into folders", 
@@ -213,51 +264,167 @@ class ExportApp(Frame):
         entry.grid(row=row, column=3, sticky=E+W)
 
         row += 1
-        faces_box = Checkbutton(self, text="Copy faces into metadata", 
-                                var=self.faces_var)
-        faces_box.grid(row=row, column=1, sticky=W)
-        
-        face_keywords_box = Checkbutton(self, 
-                                        text="Copy face namess into keywords", 
-                                        var=self.face_keywords_var)
-        face_keywords_box.grid(row=row, column=2, columnspan=2, sticky=W)
-
-        row += 1
         label = Label(self, text="Metadata")
         label.config(font=bold_font)
         label.grid(row=row, column=0, columnspan=4, sticky=W)
 
-        row += 1
-        iptc_box = Checkbutton(self,
-                               text=("Export metadata (descriptions, "
-                                     "keywords, ratings, dates)"),
-                               var=self.iptc_var)
-        iptc_box.grid(row=row, column=1, columnspan=3, sticky=W)
+        Button(self, bitmap='question',
+               command=self.help_metadata).grid(row=row, column=3, sticky=E)
 
         row += 1
-        iptc_all_box = Checkbutton(self,
-                                   text="Verify existing images",
-                                   var=self.iptc_all_var)
-        iptc_all_box.grid(row=row, column=1, sticky=W)
+        self.iptc_box = Checkbutton(self,
+                                    text=("Export metadata (descriptions, "
+                                          "keywords, ratings, dates)"),
+                                    var=self.iptc_var, state=DISABLED,
+                                    command=self.change_iptc_box)
+        self.iptc_box.grid(row=row, column=1, columnspan=3, sticky=W)
 
-        gps_box = Checkbutton(self,
-                              text="Export GPS data",
-                              var=self.gps_var)
-        gps_box.grid(row=row, column=2, sticky=W)
+        row += 1
+        self.iptc_all_box = Checkbutton(self,
+                                        text="Verify existing images",
+                                        var=self.iptc_all_var,
+                                        command=self.change_metadata_box,
+                                        state=DISABLED)
+        self.iptc_all_box.grid(row=row, column=1, sticky=W)
+
+        self.gps_box = Checkbutton(self,
+                                   text="Export GPS data",
+                                   var=self.gps_var,
+                                   command=self.change_metadata_box,
+                                   state=DISABLED)
+        self.gps_box.grid(row=row, column=2, sticky=W)
 
         row += 1
         self.dryrun_button = Button(self, text="Dry Run", 
                                     command=self.do_dryrun, state=DISABLED)
-        self.dryrun_button.grid(row=row, column=2, stick=E)
+        self.dryrun_button.grid(row=row, column=2, stick=E, pady=5)
         self.export_button = Button(self, text="Export", 
                                     command=self.do_export, state=DISABLED)
-        self.export_button.grid(row=row, column=3)
+        self.export_button.grid(row=row, column=3, pady=5)
 
         row += 1
-        self.text = ScrolledText(self)
+        self.text = ScrolledText(self, borderwidth=4, relief=RIDGE, padx=4,
+                                 pady=4)
         self.text.grid(row=row, column=0, columnspan=4, sticky=E+W+N+S)
         self.rowconfigure(row, weight=1)
 
+    def change_iptc_box(self):
+        """Clears some options that depend on the metadata export option."""
+        mode = self.iptc_var.get()
+        if not mode:
+            self.faces_var.set(0)
+            self.face_keywords_var.set(0)
+            self.iptc_all_var.set(0)
+            self.gps_var.set(0)
+
+    def change_metadata_box(self):
+        """Sets connected options if an option that needs meta data is changed."""
+        mode = (self.faces_var.get() or self.face_keywords_var.get() or
+                self.iptc_all_var.get() or self.gps_var.get())
+        if mode:
+            self.iptc_var.set(1)
+            
+    def help_events(self):
+        HelpDialog(self, """Events, Albums and Smart Albums
+
+Selects which events, albums, or smart albums to export.
+
+Each field is a regular expression, and at least one must be filled in.
+Matches are done against the beginning of the event or album name. An
+entry in Events of
+    Family
+will export all events that start with "Family", including "Family 2008"
+and "Family 2009". "|" separates alternate patterns, so
+    Family|Travel
+will export all events that start with either "Family" or "Travel".
+
+"." matches any character, and therefore,
+    .
+will export all events. To export all events with "2008" in the name, use
+    .*2008
+
+For more details on regular expressions, see
+    http://en.wikipedia.org/wiki/Regular_expression""")
+        
+    def help_export(self):
+        HelpDialog(self, """Export Settings
+
+Export Folder: path to the folder for exporting images.
+
+Overwrite changed pictures: If set, pictures that already exist in the export
+                            folder will be overriden if an different version
+                            exist in iPhoto. Any edits made to previously
+                            exported images in the export folder will be lost!
+                            Use Dry Run to see which files would be overwritten.
+
+Export originals: If set, and an image has been modified in iPhoto, both the
+                  original and the edited version will be exported. The original
+                  will be stored in a sub-folder called "Originals".
+
+Use folder hints: By default, each exported event or album will become a folder
+                  in the export folder. With folder hints, a sub-folder name can
+                  be given in the event or album description by adding a line
+                  starting with a @ character. Example:
+                      Family Vacation
+                      @Vacation
+                  would export all images in that event into a sub-folder called
+                  "Vacation".
+
+Delete obsolete pictures: If set, any image, movie file or folder in the export
+                          folder that does not exist in the iPhoto library will
+                          be deleted. Use Dry Run to see which files would be
+                          deleted.
+
+Use file links: Don't copy images during export, but make a link to the files
+                in the iPhoto library instead. This option is only available
+                if the export folder is on the same drive as the iPhoto library.
+                This option will save a lot of disk space because it avoids
+                making copies of all your images and videos. Using this option
+                causes the metadata of the images IN YOUR IPHOTO LIBRARY to be
+                modified. While phoshare should not cause any problems to your
+                images, it is best to use this option only if you have a backup
+                of your iPhoto library, and you know how to restore your library
+                from the backup. For more details on link mode, see
+                https://sites.google.com/site/phosharedoc/Home#TOC-link-mode""")
+        
+    def help_faces(self):
+        HelpDialog(self, """Faces options.
+
+Copy faces into metadata: faces tags and face regions will be copied into the
+                          image metadata using the Microsoft Photo Region
+                          Schema:
+               http://msdn.microsoft.com/en-us/library/ee719905(VS.85).aspx
+
+Copy faces names into keywords: If set, face names will be merged into image
+                                keywords. Requires "Export metadata" checked.
+
+Export faces into folders: If checked, folders will be created for each face
+                           tag, each containing all the images tagged with
+                           that person.
+
+Faces folder prefix: If set, the string will be used as a prefix for the
+                     face export folders if "Exported faces into folders"
+                     is checked. This can be just a value like "Face: ", or
+                     a sub-folder name like "Faces/" if it ends with a "/"
+
+Metadata options will be disabled if exiftool is not available.
+""")
+        
+    def help_metadata(self):
+        HelpDialog(self, """Metadata options.
+
+Export metadata: sets the description, keywords, rating and date metadata in the
+                 exported images to match the iPhoto settings.
+
+Verify existing images: If not checked, metadata will only be set for new or
+                        updated images. If checked, metadata will be checked in
+                        all images, including ones that were previously
+                        exported. This is much slower.
+
+Export GPS data: export the GPS coordinates into the image metadata.
+
+Metadata options will be disabled if exiftool is not available.""")
+        
     def check_iphoto_library(self):
         self.valid_library = False
         self.enable_buttons()
@@ -327,24 +494,91 @@ class ExportApp(Frame):
         output in phoshare.py."""
 
         def __init__(self):
-            self.albums = None
-            self.events = None
-            self.smarts = None
+            self.iphoto = '~/Pictures/iPhoto Library'
+            self.export = '~/Pictures/Album'
+            self.albums = ''
+            self.events = '.'
+            self.smarts = ''
             self.delete = False
             self.update = False
             self.link = False 
             self.dryrun = False
             self.folderhints = False
             self.nametemplate = "${caption}"
-            self.size = None  # TODO
+            self.size = ''  # TODO
             self.picasa = False  # TODO
             self.movies = True  # TODO
             self.originals = False
             self.iptc = 0
             self.gps = False
             self.faces = False
-            self.facealbums = None
+            self.facealbums = False
+            self.facealbum_prefix = ''
             self.face_keywords = False
+
+        def load(self):
+            """Attempts to load saved options. Returns True if saved options
+            were available."""
+            if not os.path.exists(_CONFIG_PATH):
+                return False
+            config = ConfigParser.SafeConfigParser()
+            config.read(_CONFIG_PATH)
+            s = 'Export1'
+            self.iphoto = config.get(s, 'iphoto')
+            self.export = config.get(s, 'export')
+            self.albums = config.get(s, 'albums')
+            self.events = config.get(s, 'events')
+            self.smarts = config.get(s, 'smarts')
+            self.delete = config.getboolean(s, 'delete')
+            self.update = config.getboolean(s, 'update')
+            self.link = config.getboolean(s, 'link')
+            self.folderhints = config.getboolean(s, 'folderhints')
+            self.nametemplate = config.get(s, 'nametemplate')
+            self.size = config.get(s, 'size')
+            self.picasa = config.getboolean(s, 'picasa')
+            self.movies = config.getboolean(s, 'movies')
+            self.originals = config.getboolean(s, 'originals')
+            self.iptc = config.getint(s, 'iptc')
+            self.gps = config.getboolean(s, 'gps')
+            self.faces = config.getboolean(s, 'faces')
+            self.facealbums = config.getboolean(s, 'facealbums')
+            self.facealbum_prefix = config.get(s, 'facealbum_prefix')
+            self.face_keywords = config.getboolean(s, 'face_keywords')
+            return True
+
+        def save(self):
+            """Saves the current options into a file."""
+            config = ConfigParser.RawConfigParser()
+            s = 'Export1'
+            config.add_section(s)
+            config.set(s, 'iphoto', self.iphoto)
+            config.set(s, 'export', self.export)
+            config.set(s, 'albums', self.albums)
+            config.set(s, 'events', self.events)
+            config.set(s, 'smarts', self.smarts)
+            config.set(s, 'delete', self.delete)
+            config.set(s, 'update', self.update)
+            config.set(s, 'link', self.link)
+            config.set(s, 'dryrun', self.dryrun)
+            config.set(s, 'folderhints', self.folderhints)
+            config.set(s, 'nametemplate', self.nametemplate)
+            config.set(s, 'size', self.size)
+            config.set(s, 'picasa', self.picasa)
+            config.set(s, 'movies', self.movies)
+            config.set(s, 'originals', self.originals)
+            config.set(s, 'iptc', self.iptc)
+            config.set(s, 'gps', self.gps)
+            config.set(s, 'faces', self.faces)
+            config.set(s, 'facealbums', self.facealbums)
+            config.set(s, 'facealbum_prefix', self.facealbum_prefix)
+            config.set(s, 'face_keywords', self.face_keywords)
+
+            config_folder = os.path.split(_CONFIG_PATH)[0]
+            if not os.path.exists(config_folder):
+                os.makedirs(config_folder)
+            configfile = open(_CONFIG_PATH, 'wb')
+            config.write(configfile)
+            configfile.close()
 
     def can_export(self):
         if (not self.albums.get() and not self.events.get() and 
@@ -382,9 +616,7 @@ class ExportApp(Frame):
         """
         try:
             # First, load the iPhoto library.
-            library_path = self.iphoto_library.get()
-            if library_path.startswith("~"):
-                library_path = os.environ.get('HOME') + library_path[1:]
+            library_path = su.expand_home_folder(self.iphoto_library.get())
             album_xml_file = iphotodata.get_album_xmlfile(library_path)
             data = iphotodata.get_iphoto_data(album_xml_file)
             msg = "Version %s library with %d images" % (
@@ -396,11 +628,11 @@ class ExportApp(Frame):
                 return
 
             # Do the actual export.
-            export_folder = self.export_folder.get()
-            if export_folder.startswith("~"):
-                export_folder = os.environ.get('HOME') + export_folder[1:]
-            
+            export_folder = su.expand_home_folder(self.export_folder.get())
+
             options = self.Options()
+            options.iphoto = self.iphoto_library.get()
+            options.export = self.export_folder.get()
             options.dryrun = mode == "dry_run"
             options.albums = self.albums.get()
             options.events = self.events.get()
@@ -419,17 +651,19 @@ class ExportApp(Frame):
             else:
                 options.iptc = 0
             options.gps = self.gps_var.get()
-            if self.face_albums_var.get():
-                options.facealbums = self.face_albums_text.get()
+            options.facealbums = self.face_albums_var.get() == 1
+            options.facealbum_prefix = self.face_albums_text.get()
             
             exclude = None # TODO
 
             exclude_folders = []  # TODO
-            self.active_library = phoshare.ExportLibrary(export_folder)
+
+            options.save()
+            self.active_library = Phoshare.ExportLibrary(export_folder)
             self.active_library.export_iphoto(data, exclude, 
                                               exclude_folders, options)
             self.thread_queue.put(("done", (True, mode, '')))
-        except Exception, e:
+        except Exception, e:  # IGNORE:W0703
             self.thread_queue.put(("done", (False, mode, str(e))))
             print >> sys.stderr, e
         
@@ -484,11 +718,9 @@ class ExportApp(Frame):
 
 
 def main():
-    """main routine for phoshare_ui."""
-    parser = phoshare.getOptionParser()
-    (options, args) = parser.parse_args()
-    app = ExportApp(options)
-    app.master.title("phoshare 2.0 Beta")
+    """Main routine for phoshare_ui. Typically launched from Phoshare.py"""
+    app = ExportApp()
+    app.master.title(_PHOSHARE_VERSION)
     sys.stdout = app
     app.init()
     app.mainloop()
