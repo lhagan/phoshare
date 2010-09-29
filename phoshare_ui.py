@@ -116,11 +116,12 @@ class ExportApp(Frame):
         self.create_widgets()
 
     def __aboutHandler(self):
-        HelpDialog(self, """       %s
+        HelpDialog(self, """%s %s
 
   Copyright 2010 Google Inc.
 
-http://code.google.com/p/phoshare""" % (phoshare_version.PHOSHARE_VERSION),
+http://code.google.com/p/phoshare""" % (phoshare_version.PHOSHARE_VERSION,
+	phoshare_version.PHOSHARE_BUILD),
                    title="About Phoshare")
 
     def init(self):
@@ -724,7 +725,7 @@ Metadata options will be disabled if exiftool is not available.""")
 def main():
     """Main routine for phoshare_ui. Typically launched from Phoshare.py"""
     app = ExportApp()
-    app.master.title(_PHOSHARE_VERSION)
+    app.master.title(phoshare_version.PHOSHARE_VERSION)
     sys.stdout = app
     try:
         app.init()
