@@ -15,16 +15,20 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
+import cStringIO
 import os
+import platform
 import threading
 import tkFileDialog
 import tkMessageBox
+import traceback
 
 # pylint: disable-msg=W0614
 from Tkinter import *  #IGNORE:W0401
 
 import appledata.iphotodata as iphotodata
 import Phoshare
+import phoshare_version
 import tilutil.exiftool as exiftool
 import tilutil.systemutils as su
 
@@ -33,7 +37,6 @@ from ScrolledText import ScrolledText
 import ConfigParser
 import Queue
 
-_PHOSHARE_VERSION = 'Phoshare 1.0'
 _CONFIG_PATH = su.expand_home_folder('~/Library/Application Support/Google/'
                                      'Phoshare/phoshare.cfg')
 
@@ -117,7 +120,7 @@ class ExportApp(Frame):
 
   Copyright 2010 Google Inc.
 
-http://code.google.com/p/phoshare""" % (_PHOSHARE_VERSION),
+http://code.google.com/p/phoshare""" % (phoshare_version.PHOSHARE_VERSION),
                    title="About Phoshare")
 
     def init(self):
@@ -248,7 +251,7 @@ http://code.google.com/p/phoshare""" % (_PHOSHARE_VERSION),
         self.faces_box.grid(row=row, column=1, sticky=W)
 
         self.face_keywords_box = Checkbutton(self, 
-                                             text="Copy face namess into keywords", 
+                                             text="Copy face names into keywords", 
                                              var=self.face_keywords_var,
                                              command=self.change_metadata_box,
                                              state=DISABLED)
@@ -434,7 +437,7 @@ Metadata options will be disabled if exiftool is not available.""")
     def set_library_status(self, good, message):
         if good:
             self.valid_library = True
-            self.enable_buttons()
+        self.enable_buttons()
         self.iphoto_library_status.set(message)
 
     def write_progress(self, text):
@@ -515,6 +518,7 @@ Metadata options will be disabled if exiftool is not available.""")
             self.facealbums = False
             self.facealbum_prefix = ''
             self.face_keywords = False
+            self.verbose = False
 
         def load(self):
             """Attempts to load saved options. Returns True if saved options
@@ -660,8 +664,8 @@ Metadata options will be disabled if exiftool is not available.""")
 
             options.save()
             self.active_library = Phoshare.ExportLibrary(export_folder)
-            self.active_library.export_iphoto(data, exclude, 
-                                              exclude_folders, options)
+            Phoshare.export_iphoto(self.active_library, data, exclude, 
+                                   exclude_folders, options)
             self.thread_queue.put(("done", (True, mode, '')))
         except Exception, e:  # IGNORE:W0703
             self.thread_queue.put(("done", (False, mode, str(e))))
@@ -722,8 +726,26 @@ def main():
     app = ExportApp()
     app.master.title(_PHOSHARE_VERSION)
     sys.stdout = app
-    app.init()
-    app.mainloop()
+    try:
+        app.init()
+        app.mainloop()
+    except Exception, e:
+        f = cStringIO.StringIO()
+        traceback.print_exc(file=f)
+        app.write_progress('--- Fatal Error ---\n')
+        app.write_progress('Please include the information below in your bug'
+                           ' report.\n\n')
+        app.write_progress('%s\n\n%s\n' % (str(e), f.getvalue()))
+        app.write_progress('\n'.join(os.uname()))
+        app.write_progress('\nMac version: %s\n' % (platform.mac_ver()[0]))
+        app.write_progress('Python version: %s\n' % (platform.python_version()))
+        tkMessageBox.showerror(
+            'Phoshare Error', 
+            'Phoshare encountered a serious problem and will shut down. '
+            'Please copy the information shown in the application output panel '
+            'when reporting this problem at\n'
+            'http://code.google.com/p/phoshare/issues/entry\n\n%s.' % (str(e)))
+        raise e
 
 if __name__ == "__main__":
     main()

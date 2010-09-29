@@ -40,7 +40,7 @@ def check_exif_tool(msgstream=sys.stderr):
             print >> msgstream, "You have version " + str(version) + " of exiftool."
             print >> msgstream, """
 Please upgrade to version 7.47 or newer of exiftool. You can download a copy
-from http://www.sno.phy.queensu.ca/~phil/exiftool/. iphoto_export wants to use
+from http://www.sno.phy.queensu.ca/~phil/exiftool/. Phosare wants to use
 the new -X option to read IPTC data in XML format."""
             return False
         return True
@@ -79,12 +79,13 @@ def get_iptc_data(image_file):
     date_time_original = None
     rating = 0
     gps = None
+    region_names = []
+    region_rectangles = []
     if output:
         try:
             gps_latitude = None
             gps_longitude = None
-            region_rectangles = []
-            region_names = []
+
             xml_data = minidom.parseString(output)
         
             for xml_desc in xml_data.getElementsByTagName("rdf:Description"):
@@ -96,15 +97,18 @@ def get_iptc_data(image_file):
                     caption = xml_caption.firstChild.nodeValue
                 for xml_element in xml_data.getElementsByTagName(
                     "ExifIFD:DateTimeOriginal"):
+                    if not xml_element.firstChild:
+                        continue
                     try:
                         date_time_original = time.strptime(xml_element.firstChild.nodeValue,
                                                            "%Y:%m:%d %H:%M:%S")
-                        date_time_original = datetime.datetime(date_time_original.tm_year,
-                                                               date_time_original.tm_mon,
-                                                               date_time_original.tm_mday,
-                                                               date_time_original.tm_hour,
-                                                               date_time_original.tm_min,
-                                                               date_time_original.tm_sec)
+                        date_time_original = datetime.datetime(
+                            date_time_original.tm_year,
+                            date_time_original.tm_mon,
+                            date_time_original.tm_mday,
+                            date_time_original.tm_hour,
+                            date_time_original.tm_min,
+                            date_time_original.tm_sec)
                     except ValueError, _ve:
                         print >> sys.stderr, ("Exiftool returned an invalid date %s for %s - "
                                               "ignoring.") % (
@@ -210,6 +214,6 @@ def update_iptcdata(filepath, new_caption, new_keywords, new_datetime,
         return True
     else:
         print >> sys.stderr, "Failed to update IPTC data in image %s: %s" % (
-            filepath, result)
+            su.fsenc(filepath), result)
         return False
     

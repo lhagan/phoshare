@@ -36,7 +36,8 @@ def execandcapture(command):
     """execute a shell command, and return output lines in a sequence."""
     pipe = None
     try:
-        pipe = subprocess.Popen(command, shell=False, stdout=subprocess.PIPE).stdout
+        pipe = subprocess.Popen(command, shell=False, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT).stdout
         data = []
         while True:
             line = pipe.readline()
