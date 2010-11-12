@@ -48,7 +48,9 @@ class AppleXMLHandler(sax.handler.ContentHandler):
         self._parsingdata = False
    
     def add_object(self, xml_object):
-        '''Adds an object to the current container, which can be a list or a map.'''
+        '''Adds an object to the current container, which can be a list or a
+        map.
+        '''
         current_top = self.parse_stack[-1]
         if isinstance(current_top, list):
             current_top.append(xml_object)
@@ -58,7 +60,8 @@ class AppleXMLHandler(sax.handler.ContentHandler):
     def startElement(self, name, _attributes): #IGNORE:C0103
         '''Handles the start of an XML element'''
         self._parsingdata = False
-        if name in ("key", "date", "string", "integer", "real", "false", "true"):
+        if name in ("key", "date", "string", "integer", "real", "false",
+                    "true"):
             self.chars = None
         elif name == "dict":
             new_dict = {}
@@ -84,8 +87,8 @@ class AppleXMLHandler(sax.handler.ContentHandler):
         # if we are inside a <data> element, we need to strip the characters.
         # Here is a typical <data> element:
         #   <data>
-        #   AQEAAwAAAAIAAAAZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-        #   AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        #   AQEAAwAAAAIAAAAZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        #   AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
         #   AAAAAA==
         #   </data>
         if self._parsingdata:
@@ -119,14 +122,23 @@ class AppleXMLHandler(sax.handler.ContentHandler):
         '''Returns the root of the parsed data tree'''
         return self.top_node[0]
 
-      
+
 def read_applexml(filename):
-    '''Reads the named file, and parses it as an Apple XML file. Returns the top 
-    node.'''
+    '''Reads the named file, and parses it as an Apple XML file. Returns the
+    top node.'''
     parser = sax.make_parser()
     handler = AppleXMLHandler()
     parser.setContentHandler(handler)
     parser.setEntityResolver(AppleXMLResolver())
     parser.parse(filename)
+    return handler.gettopnode()
+
+def read_applexml_string(data):
+    '''Parses the data as Apple XML format. Returns the top node.'''
+    parser = sax.make_parser()
+    handler = AppleXMLHandler()
+    parser.setContentHandler(handler)
+    parser.setEntityResolver(AppleXMLResolver())
+    parser.parseString(data)
     return handler.gettopnode()
 

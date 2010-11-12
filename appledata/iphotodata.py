@@ -11,6 +11,7 @@ organized in the class IPhotoData. Images in iPhoto are grouped using events
 (formerly knows as rolls) and albums. Each image is in exactly one event, and
 optionally, in zero or more albums. Albums can be nested (folders). The album
 types are:
+Flagged - flagged pictures
 Folder - contains other albums
 Published - an album publishe to MobileMe
 Regular - a regular user created album
@@ -39,12 +40,29 @@ None - should not really happen
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
+
 import datetime
 import os
 import sys
 
 import appledata.applexml as applexml
+import tilutil.imageutils as imageutils
 import tilutil.systemutils as sysutils
+
+def _parse_face_rectangle(string_data):
+    """Parse a rectangle specification into an array of coordinate data.
+
+       Args:
+         string_data: Rectangle like '{{x, y}, {width, height}}'
+
+       Returns:
+         Array of x, y, width and height as floats.
+    """
+    try:
+        return [float(entry.strip('{} ')) for entry in string_data.split(',')]
+    except ValueError:
+        print >> sys.stderr, 'Failed to parse rectangle ' + string_data
+        return [ 0.4, 0.4, 0.2, 0.2 ]
 
 class IPhotoData(object):
     """top level iPhoto data node."""
@@ -66,13 +84,15 @@ class IPhotoData(object):
                 face_key = face_entry.get("key")
                 face_name = face_entry.get("name")
                 self.face_names[face_key] = face_name
-                # Other keys in face_entry: image, key image face index, PhotoCount, Order
+                # Other keys in face_entry: image, key image face index,
+                # PhotoCount, Order
 
         self.images_by_id = {}
         image_data = self.data.get("Master Image List")
         if image_data:
             for key in image_data:
-                image = IPhotoImage(image_data.get(key), self.keywords, self.face_names)
+                image = IPhotoImage(image_data.get(key), self.keywords,
+                                    self.face_names)
                 self.images_by_id[key] = image
 
         album_data = self.data.get("List of Albums")
@@ -108,10 +128,11 @@ class IPhotoData(object):
                 self.images_by_base_name[base_name] = other_images
             other_images.append(image)
 
-            other_image_list = self.images_by_file_name.get(image.getimagename())
+            imagename = image.getimagename()
+            other_image_list = self.images_by_file_name.get(imagename)
             if other_image_list is None:
                 other_image_list = []
-                self.images_by_file_name[image.getimagename()] = other_image_list
+                self.images_by_file_name[imagename] = other_image_list
             other_image_list.append(image)
 
 
@@ -131,8 +152,12 @@ class IPhotoData(object):
         return self._rolls.values()
     rolls = property(_getrolls, "List of rolls (events)")
 
+    def getroll(self, album_id):
+        return self._rolls.get(album_id)    
+
     def getbaseimages(self, base_name):
-        """returns an IPhotoImage list of all images with a matching base name."""
+        """returns an IPhotoImage list of all images with a matching base name.
+        """
         if not self.images_by_base_name:
             self._build_image_name_list()
         return self.images_by_base_name.get(base_name)
@@ -161,10 +186,12 @@ class IPhotoData(object):
         messages = []
         for album in self._rolls.values():
             if album.size > max_size:
-                messages.append("%s: event too large (%d)" % (album.name, album.size))
+                messages.append("%s: event too large (%d)" % (album.name, 
+                                                              album.size))
         for album in self.albums.values():
             if album.albumtype == "Regular" and album.size > max_size:
-                messages.append("%s: album too large (%d)" % (album.name, album.size))
+                messages.append("%s: album too large (%d)" % (album.name, 
+                                                              album.size))
         messages.sort()
         for message in messages:
             print message
@@ -175,7 +202,7 @@ class IPhotoData(object):
 #    for (IPhotoImage image : images_by_id.values()) {
 #      String comment = image.GetComment();
 #      if ((comment == null or comment.length() == 0) && !image.IsHidden())
-#        images.add(image.getcaption());
+#        images.add(image.caption);
 #    }
 #    for (String caption : images)
 #      System.out.println(caption + ": missing comment.");
@@ -197,15 +224,15 @@ class IPhotoData(object):
                     albums.append(album.name)
                     in_album = True
                     if album_name != roll_name:
-                        messages.append(image.getcaption() + ": in wrong album (" +
+                        messages.append(image.caption + ": in wrong album (" +
                                         roll_name + " vs. " + album_name + ").")
                 elif (album.isSmart() and album_name.endswith(" Collection") or
                       album_name == "People" or album_name == "Unorganized"):
                     in_album = True
             if not in_album:
-                messages.append(image.getcaption() + ": not in any album.")
+                messages.append(image.caption + ": not in any album.")
             if albums:
-                messages.append(image.getcaption() + ": in more than one album: " +
+                messages.append(image.caption + ": in more than one album: " +
                                 " ".join(albums))
         messages.sort()
         for message in messages:
@@ -234,16 +261,17 @@ class IPhotoImage(object):
 
     def __init__(self, data, keyword_map, face_map):
         self.data = data
-        self.caption = data.get("Caption")
-        self.comment = data.get("Comment")
+        self._caption = sysutils.nn_string(data.get("Caption")).strip()
+        self.comment = sysutils.nn_string(data.get("Comment")).strip()
         self.date = applexml.getappletime(data.get("DateAsTimerInterval"))
-        self.mod_date = applexml.getappletime(data.get("ModDateAsTimerInterval"))
+        self.mod_date = applexml.getappletime(
+            data.get("ModDateAsTimerInterval"))
         self.image_path = data.get("ImagePath")
         self.rating = int(data.get("Rating"))
         if data.get("longitude"):
             latitude = float(data.get("latitude"))
             longitude = float(data.get("longitude"))
-            self.gps = (float("%.6f" % (latitude)), float("%.6f" % (longitude)))
+            self.gps = imageutils.GpsLocation(latitude, longitude)
         else:
             self.gps = None
 
@@ -270,7 +298,8 @@ class IPhotoImage(object):
                     self.faces.append(face_name)
                     # Rectangle is '{{x, y}, {width, height}}' as ratios,
                     # referencing the lower left corner of the face rectangle.
-                    self.face_rectangles.append(self._parse_face_rectangle(face_entry.get("rectangle")))
+                    self.face_rectangles.append(self._parse_face_rectangle(
+                        face_entry.get("rectangle")))
                 # Other keys in face_entry: face index
 
     def _parse_face_rectangle(self, string_data):
@@ -301,11 +330,11 @@ class IPhotoImage(object):
         """Returns the base name of the main image file."""
         return sysutils.getfilebasename(self.image_path)
 
-    def getcaption(self):
-        """gets the caption (title) of the image."""
-        if not self.caption:
+    def _getcaption(self):
+        if not self._caption:
             return self.getimagename()
-        return self.caption
+        return self._caption
+    caption = property(_getcaption, doc="Caption (title) of the image")
 
     def ismovie(self):
         """Tests if this image is a movie."""
@@ -357,7 +386,8 @@ class IPhotoContainer(object):
                 if image:
                     self.images.append(image)
                 else:
-                    print "%s: image with id %s does not exist." % (self.tostring(), key)
+                    print "%s: image with id %s does not exist." % (
+                        self.tostring(), key)
 
     def _getcomment(self):
         return self.data.get("Comments")
@@ -436,10 +466,11 @@ class IPhotoAlbum(IPhotoContainer):
         else:
             self.parent.addalbum(self)
 
-        # Albums have no date attribute, so we calculate it from the image dates.
+        # Albums have no date attribute, so we calculate it from the image
+        # dates.
         self.date = datetime.datetime.now()
-        for image in images.values():
-            if image.date < self.date:
+        for image in self.images:
+            if image.date and image.date < self.date:
                 self.date = image.date
 
 class IPhotoFace(object):
@@ -495,11 +526,11 @@ def get_iphoto_data(album_xml_file, do_places=False):
     album_xml = applexml.read_applexml(album_xml_file)
 
     data = IPhotoData(album_xml)
-    if (not data.applicationVersion.startswith("8.") and
+    if (not data.applicationVersion.startswith("9.") and
+        not data.applicationVersion.startswith("8.") and
         not data.applicationVersion.startswith("7.") and
         not data.applicationVersion.startswith("6.")):
         raise ValueError, "iPhoto version %s not supported" % (
             data.applicationVersion)
-
 
     return data

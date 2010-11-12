@@ -2,6 +2,8 @@
    previous choices.
 '''
 
+import tilutil.systemutils as su
+
 class ConfirmManager:
     '''Class to prompt user for file operation confirmations, and remember the 
        patterns for future prompts.
@@ -44,7 +46,7 @@ class ConfirmManager:
             if path.find(pattern) != -1:
                 return 0
         
-        answer = raw_input(message)
+        answer = raw_input(su.fsenc(message))
         if len(answer) == 0:
             return 0
         first_char = answer[0].lower()

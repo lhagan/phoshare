@@ -62,6 +62,21 @@ def equalscontent(string1, string2):
         string2 = ""
     return string1.strip() == string2.strip()
 
+def nn_string(value):
+    """Returns a string that will be None (replaced by '')."""
+    if value == None:
+        return ''
+    return value
+
+def unicode_string(value):
+    """Returns a unicode string, taking care of None and converting non-unicode
+       input strings."""
+    if value == None:
+        return u''
+    if isinstance(value, unicode):
+        return value
+    return unicode(value, _sysenc)
+
 # FileUtil --------------------------------------------------------------------
 
 def os_listdir_unicode(folder):
@@ -88,7 +103,8 @@ def fsdec(value):
     return value.decode(_sysenc)
 
 def getfilebasename(file_path):
-    """returns the name of a file, without the extension. "/a/b/c.txt" -> "c"."""
+    """returns the name of a file, without the extension. "/a/b/c.txt" -> "c".
+    """
     return os.path.basename(os.path.splitext(file_path)[0])
 
 

@@ -28,6 +28,7 @@ from xml.dom import minidom
 from xml import parsers
 
 import systemutils as su
+import imageutils
 
 EXIFTOOL = "exiftool"
 
@@ -37,7 +38,7 @@ def check_exif_tool(msgstream=sys.stderr):
         output = su.execandcombine((EXIFTOOL, "-ver"))
         version = float(output)
         if version < 7.47:
-            print >> msgstream, "You have version " + str(version) + " of exiftool."
+            print >> msgstream, "You have version %f of exiftool." % version
             print >> msgstream, """
 Please upgrade to version 7.47 or newer of exiftool. You can download a copy
 from http://www.sno.phy.queensu.ca/~phil/exiftool/. Phosare wants to use
@@ -100,8 +101,9 @@ def get_iptc_data(image_file):
                     if not xml_element.firstChild:
                         continue
                     try:
-                        date_time_original = time.strptime(xml_element.firstChild.nodeValue,
-                                                           "%Y:%m:%d %H:%M:%S")
+                        date_time_original = time.strptime(
+                            xml_element.firstChild.nodeValue,
+                            "%Y:%m:%d %H:%M:%S")
                         date_time_original = datetime.datetime(
                             date_time_original.tm_year,
                             date_time_original.tm_mon,
@@ -110,10 +112,12 @@ def get_iptc_data(image_file):
                             date_time_original.tm_min,
                             date_time_original.tm_sec)
                     except ValueError, _ve:
-                        print >> sys.stderr, ("Exiftool returned an invalid date %s for %s - "
-                                              "ignoring.") % (
-                            xml_element.firstChild.nodeValue, image_file)
-                for xml_element in xml_data.getElementsByTagName("XMP-xmp:Rating"):
+                        print >> sys.stderr, ("Exiftool returned an invalid "
+                                              "date %s for %s - ignoring.") % (
+                            xml_element.firstChild.nodeValue,
+                            su.fsenc(image_file))
+                for xml_element in xml_data.getElementsByTagName(
+                    "XMP-xmp:Rating"):
                     rating = int(xml_element.firstChild.nodeValue)
                 for xml_element in xml_data.getElementsByTagName(
                     "Composite:GPSLatitude"):
@@ -122,23 +126,20 @@ def get_iptc_data(image_file):
                     "Composite:GPSLongitude"):
                     gps_longitude = xml_element.firstChild.nodeValue
                 string_rectangles = []
-                _get_xml_nodevalues(xml_desc, 'XMP-MP:RegionRectangle', string_rectangles)
+                _get_xml_nodevalues(xml_desc, 'XMP-MP:RegionRectangle', 
+                                    string_rectangles)
                 for string_rectangle in string_rectangles:
                     rectangle = []
                     for c in string_rectangle.split(','):
                         rectangle.append(float(c))
                     region_rectangles.append(rectangle)
-                _get_xml_nodevalues(xml_desc, 'XMP-MP:RegionPersonDisplayName', region_names)
+                _get_xml_nodevalues(xml_desc, 'XMP-MP:RegionPersonDisplayName', 
+                                    region_names)
 
             xml_data.unlink()
             if gps_latitude and gps_longitude:
-                latitude = float(gps_latitude[0:-2])
-                if gps_latitude.endswith(" S"):
-                    latitude = -latitude
-                longitude = float(gps_longitude[0:-2])
-                if gps_longitude.endswith(" W"):
-                    longitude = -longitude
-                gps = (latitude, longitude)
+                gps = imageutils.GpsLocation().from_composite(gps_latitude, 
+                                                              gps_longitude)
         except parsers.expat.ExpatError, ex:
             print >> sys.stderr, "Could not parse exiftool output %s: %s" % (
                 output, ex)
@@ -147,24 +148,25 @@ def get_iptc_data(image_file):
             region_rectangles, region_names)
 
 
-def update_iptcdata(filepath, new_caption, new_keywords, new_datetime, 
-                    new_rating, new_gps, new_rectangles, new_persons): 
+def update_iptcdata(filepath, new_caption, new_keywords, new_datetime,
+                    new_rating, new_gps, new_rectangles, new_persons):
     """Updates the caption and keywords of an image file."""
     # Some cameras write into ImageDescription, so we wipe it out to not cause
-    # conflicts with Caption-Abstract. We also wipe out the XMP Subject and Description
-    # tags (we use Keywords and Caption-Abstract).
-    command = [EXIFTOOL, '-F', '-ImageDescription=', '-Subject=', '-Description=']
+    # conflicts with Caption-Abstract. We also wipe out the XMP Subject and
+    # Description tags (we use Keywords and Caption-Abstract).
+    command = [EXIFTOOL, '-F', '-m', '-ImageDescription=', '-Subject=',
+               '-Description=']
     tmp = None
     if not new_caption is None:
-        tmpfd, tmp = tempfile.mkstemp(dir="/var/tmp")
-        os.close(tmpfd)
-        file1 = open(tmp, "w")
         if not new_caption:
-            # you can't set caption to an empty string
-            new_caption = " "
-        print >> file1, new_caption.encode("utf-8")
-        file1.close()
-        command.append('-Caption-Abstract<=%s' % (tmp))
+            command.append('-Caption-Abstract=')
+        else:
+            tmpfd, tmp = tempfile.mkstemp(dir="/var/tmp")
+            os.close(tmpfd)
+            file1 = open(tmp, "w")
+            print >> file1, new_caption.encode("utf-8")
+            file1.close()
+            command.append('-Caption-Abstract<=%s' % (tmp))
     
     if new_datetime:
         command.append('-DateTimeOriginal="%s"' % (
@@ -179,18 +181,10 @@ def update_iptcdata(filepath, new_caption, new_keywords, new_datetime,
     if new_gps:
         command.append('-c')
         command.append('%.6f')
-        latitude = float(new_gps[0])
-        command.append('-GPSLatitude="%f"' % (abs(latitude)))
-        if latitude >= 0.0:
-            command.append('-GPSLatitudeRef=N')
-        else:
-            command.append('-GPSLatitudeRef=S')
-        longitude = float(new_gps[1])
-        command.append('-GPSLongitude="%f"' % (abs(longitude)))
-        if longitude >= 0.0:
-            command.append('-GPSLongitudeRef=E')
-        else:
-            command.append('-GPSLongitudeRef=W')
+        command.append('-GPSLatitude="%f"' % (abs(new_gps.latitude)))
+        command.append('-GPSLatitudeRef=' + new_gps.latitude_ref())
+        command.append('-GPSLongitude="%f"' % (abs(new_gps.longitude)))
+        command.append('-GPSLongitudeRef=' + new_gps.longitude_ref())
     if new_persons:
         for person in new_persons:
             command.append(u'-RegionPersonDisplayName=%s' % (person))
@@ -198,7 +192,8 @@ def update_iptcdata(filepath, new_caption, new_keywords, new_datetime,
         command.append('-RegionPersonDisplayName=')
     if new_rectangles:
         for rectangle in new_rectangles:
-            command.append('-RegionRectangle=%s' % (','.join(str(c) for c in rectangle)))
+            command.append('-RegionRectangle=%s' % (
+                ','.join(str(c) for c in rectangle)))
     elif new_rectangles != None:
         command.append('-RegionRectangle=')
     command.append("-iptc:CodedCharacterSet=ESC % G")
@@ -206,7 +201,10 @@ def update_iptcdata(filepath, new_caption, new_keywords, new_datetime,
     result = su.execandcombine(command)
     if tmp:
         os.remove(tmp)
-    if result == "1 image files updated":
+    if result.find("1 image files updated") != -1:
+        if result != "1 image files updated":
+            print result
+            
         # wipe out the back file created by exiftool
         backup_file = filepath + "_original"
         if os.path.exists(backup_file):
