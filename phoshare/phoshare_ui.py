@@ -21,14 +21,13 @@ import threading
 import tkFileDialog
 import tkMessageBox
 import traceback
-from string import Template
 
 # pylint: disable-msg=W0614
 from Tkinter import *  #IGNORE:W0401
 
 import appledata.iphotodata as iphotodata
-import Phoshare
-import phoshare_version
+import phoshare.phoshare_main as phoshare_main
+import phoshare.phoshare_version as phoshare_version
 import tilutil.exiftool as exiftool
 import tilutil.systemutils as su
 
@@ -67,12 +66,13 @@ class ExportApp(Frame):
         Frame.__init__(self, master, bd=10)
 
         top = self.winfo_toplevel()
-        menuBar = Menu(top)
-        top["menu"] = menuBar
+        menu_bar = Menu(top)
+        top["menu"] = menu_bar
         
-        subMenu = Menu(menuBar)
-        menuBar.add_cascade(label="Help", menu=subMenu)
-        subMenu.add_command(label="About Phoshare", command=self.__aboutHandler)
+        sub_menu = Menu(menu_bar)
+        menu_bar.add_cascade(label="Help", menu=sub_menu)
+        sub_menu.add_command(label="About Phoshare",
+                             command=self.__aboutHandler)
 
         self.thread_queue = Queue.Queue(maxsize=100)
         self.active_library = None
@@ -103,14 +103,19 @@ class ExportApp(Frame):
         self.originals_var = IntVar()
         self.link_var = IntVar()
         self.folder_hints_var = IntVar()
+        self.faces_box = None
         self.faces_var = IntVar()
+        self.face_keywords_box = None
         self.face_keywords_var = IntVar()
         self.face_albums_var = IntVar()
         self.face_albums_text = StringVar()
 
+        self.iptc_box = None
+        self.iptc_all_box = None
         self.iptc_var = IntVar()
         self.iptc_all_var = IntVar()
 
+        self.gps_box = None
         self.gps_var = IntVar()
 
         self.info_icon = PhotoImage(file="info-b16.gif")
@@ -511,13 +516,14 @@ Metadata options will be disabled if exiftool is not available.""")
             self.albums = ''
             self.events = '.'
             self.smarts = ''
+            self.ignore = []
             self.delete = False
             self.update = False
             self.link = False 
             self.dryrun = False
             self.folderhints = False
-            self.captiontemplate = Template("${description}")
-            self.nametemplate = "${caption}"
+            self.captiontemplate = u'{description}'
+            self.nametemplate = u'{caption}'
             self.size = ''  # TODO
             self.picasa = False  # TODO
             self.movies = True  # TODO
@@ -557,9 +563,9 @@ Metadata options will be disabled if exiftool is not available.""")
             if config.has_option(s, 'folderhints'):
                 self.folderhints = config.getboolean(s, 'folderhints')
             if config.has_option(s, 'captiontemplate'):
-                self.nametemplate = config.get(s, 'captiontemplate')
+                self.nametemplate = unicode(config.get(s, 'captiontemplate'))
             if config.has_option(s, 'nametemplate'):
-                self.nametemplate = config.get(s, 'nametemplate')
+                self.nametemplate = unicode(config.get(s, 'nametemplate'))
             if config.has_option(s, 'size'):
                 self.size = config.get(s, 'size')
             if config.has_option(s, 'picasa'):
@@ -726,9 +732,9 @@ Metadata options will be disabled if exiftool is not available.""")
 
             options.save()
             print " ".join(args)
-            self.active_library = Phoshare.ExportLibrary(export_folder)
-            Phoshare.export_iphoto(self.active_library, data, exclude, 
-                                   options)
+            self.active_library = phoshare_main.ExportLibrary(export_folder)
+            phoshare_main.export_iphoto(self.active_library, data, exclude, 
+                                        options)
             self.thread_queue.put(("done", (True, mode, '')))
         except Exception, e:  # IGNORE:W0703
             self.thread_queue.put(("done",

@@ -1,7 +1,5 @@
 '''iPhoto database: reads iPhoto database and parses it into albums and images.
 
-Created on May 29, 2009
-
 @author: tsporkert@gmail.com
 
 This class reads iPhoto image, event, album information from the file
@@ -49,7 +47,7 @@ import appledata.applexml as applexml
 import tilutil.imageutils as imageutils
 import tilutil.systemutils as sysutils
 
-def _parse_face_rectangle(string_data):
+def parse_face_rectangle(string_data):
     """Parse a rectangle specification into an array of coordinate data.
 
        Args:
@@ -298,24 +296,9 @@ class IPhotoImage(object):
                     self.faces.append(face_name)
                     # Rectangle is '{{x, y}, {width, height}}' as ratios,
                     # referencing the lower left corner of the face rectangle.
-                    self.face_rectangles.append(self._parse_face_rectangle(
+                    self.face_rectangles.append(parse_face_rectangle(
                         face_entry.get("rectangle")))
                 # Other keys in face_entry: face index
-
-    def _parse_face_rectangle(self, string_data):
-        """Parse a rectangle specification into an array of coordinate data.
-
-           Args:
-             string_data: Rectangle like '{{x, y}, {width, height}}'
-
-           Returns:
-             Array of x, y, width and height as floats.
-        """
-        try:
-            return [float(entry.strip('{} ')) for entry in string_data.split(',')]
-        except ValueError:
-            print >> sys.stderr, 'Failed to parse rectangle ' + string_data
-            return [ 0.4, 0.4, 0.2, 0.2 ]
 
     def getimagepath(self):
         """Returns the full path to this image.."""
@@ -519,7 +502,7 @@ def get_album_xmlfile(library_dir):
         "location.") % (library_dir)
 
 
-def get_iphoto_data(album_xml_file, do_places=False):
+def get_iphoto_data(album_xml_file):
     """reads the iPhoto database and converts it into an iPhotoData object."""
     library_dir = os.path.dirname(album_xml_file)
     print "Reading iPhoto database from " + library_dir + "..."

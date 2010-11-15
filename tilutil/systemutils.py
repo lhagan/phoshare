@@ -102,6 +102,20 @@ def fsdec(value):
         return ""
     return value.decode(_sysenc)
 
+def pout(msg):
+    '''Prints a message to sys.stdout, taking care of character encodings.'''
+    try:
+        print fsenc(msg)
+    except UnicodeError, e:
+        print '%s (ignored)' % str(e)
+         
+def perr(msg):
+    '''Prints a message to sys.stderr, taking care of character encodings.'''
+    try:
+        print >> sys.stderr, fsenc(msg)
+    except UnicodeError, e:
+        print >> sys.stderr, '%s (ignored)' % str(e)
+         
 def getfilebasename(file_path):
     """returns the name of a file, without the extension. "/a/b/c.txt" -> "c".
     """

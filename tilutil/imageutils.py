@@ -19,10 +19,10 @@
 
 import re
 import sys
-import systemutils as su
+import tilutil.systemutils as su
 import unicodedata
 
-# ImageMagick "convert" tool
+# ImageMagick "convert" tool. Obsolete - should use _SIPS_TOOL only.
 CONVERT_TOOL = "convert"
 
 # Image processing tool
@@ -269,15 +269,15 @@ _CAPTION_PATTERN = re.compile(
 
 def get_photo_caption(photo, caption_template):
     """Gets the caption for a IPhotoImage photo, using a template. Supports:
-       ${caption} - the iPhoto caption (title).
-       ${description} - the iPhoto comment.
-       ${dated_caption_description} - the caption and comments from an
+       {caption} - the iPhoto caption (title).
+       {description} - the iPhoto comment.
+       {dated_caption_description} - the caption and comments from an
            IPhotoImage combined into a single string, nicely formatted like
            YYYY/MM/DD title: description.
 
        Args:
          photo - an IPhotoImage photo.
-         caption_template - a Template object.
+         caption_template - a format string.
     """
     result = photo.caption
     m = re.match(_CAPTION_PATTERN_INDEX, result)
@@ -294,9 +294,8 @@ def get_photo_caption(photo, caption_template):
     if photo.comment:
         result += ': ' + photo.comment
 
-    return caption_template.safe_substitute({"caption": photo.caption,
-                                             "description" : photo.comment,
-                                             "dated_caption_description" :
-                                             result })
+    return caption_template.format(caption=photo.caption,
+                                   description=photo.comment,
+                                   dated_caption_description=result)
 
     

@@ -27,8 +27,8 @@ import time
 from xml.dom import minidom
 from xml import parsers
 
-import systemutils as su
-import imageutils
+import tilutil.systemutils as su
+import tilutil.imageutils as imageutils
 
 EXIFTOOL = "exiftool"
 
@@ -73,7 +73,7 @@ def get_iptc_data(image_file):
         (EXIFTOOL, "-X", "-m", "-q", "-q", '-c', '%.6f', "-Keywords", 
          "-Caption-Abstract", "-DateTimeOriginal", "-Rating", "-GPSLatitude",
          "-Subject", "-GPSLongitude", "-RegionRectangle",
-         "-RegionPersonDisplayName", "%s" % (image_file.encode('utf8'))))
+         "-RegionPersonDisplayName", image_file))
   
     keywords = []
     caption = None
@@ -88,22 +88,22 @@ def get_iptc_data(image_file):
             gps_longitude = None
 
             xml_data = minidom.parseString(output)
-        
-            for xml_desc in xml_data.getElementsByTagName("rdf:Description"):
-                _get_xml_nodevalues(xml_desc, "IPTC:Keywords", keywords)
+
+            for xml_desc in xml_data.getElementsByTagName('rdf:Description'):
+                _get_xml_nodevalues(xml_desc, 'IPTC:Keywords', keywords)
                 # Keywords can also be stored as Subject in the XMP directory
-                _get_xml_nodevalues(xml_desc, "XMP:Subject", keywords)
+                _get_xml_nodevalues(xml_desc, 'XMP:Subject', keywords)
                 for xml_caption in xml_data.getElementsByTagName(
-                    "IPTC:Caption-Abstract"):
+                    'IPTC:Caption-Abstract'):
                     caption = xml_caption.firstChild.nodeValue
                 for xml_element in xml_data.getElementsByTagName(
-                    "ExifIFD:DateTimeOriginal"):
+                    'ExifIFD:DateTimeOriginal'):
                     if not xml_element.firstChild:
                         continue
                     try:
                         date_time_original = time.strptime(
                             xml_element.firstChild.nodeValue,
-                            "%Y:%m:%d %H:%M:%S")
+                            '%Y:%m:%d %H:%M:%S')
                         date_time_original = datetime.datetime(
                             date_time_original.tm_year,
                             date_time_original.tm_mon,
@@ -112,18 +112,18 @@ def get_iptc_data(image_file):
                             date_time_original.tm_min,
                             date_time_original.tm_sec)
                     except ValueError, _ve:
-                        print >> sys.stderr, ("Exiftool returned an invalid "
-                                              "date %s for %s - ignoring.") % (
+                        su.perr('Exiftool returned an invalid '
+                                'date %s for %s - ignoring.' % (
                             xml_element.firstChild.nodeValue,
-                            su.fsenc(image_file))
+                            image_file))
                 for xml_element in xml_data.getElementsByTagName(
-                    "XMP-xmp:Rating"):
+                    'XMP-xmp:Rating'):
                     rating = int(xml_element.firstChild.nodeValue)
                 for xml_element in xml_data.getElementsByTagName(
-                    "Composite:GPSLatitude"):
+                    'Composite:GPSLatitude'):
                     gps_latitude = xml_element.firstChild.nodeValue
                 for xml_element in xml_data.getElementsByTagName(
-                    "Composite:GPSLongitude"):
+                    'Composite:GPSLongitude'):
                     gps_longitude = xml_element.firstChild.nodeValue
                 string_rectangles = []
                 _get_xml_nodevalues(xml_desc, 'XMP-MP:RegionRectangle', 
@@ -141,8 +141,8 @@ def get_iptc_data(image_file):
                 gps = imageutils.GpsLocation().from_composite(gps_latitude, 
                                                               gps_longitude)
         except parsers.expat.ExpatError, ex:
-            print >> sys.stderr, "Could not parse exiftool output %s: %s" % (
-                output, ex)
+            su.perr('Could not parse exiftool output %s: %s' % (
+                output, ex))
 
     return (keywords, caption, date_time_original, rating, gps,
             region_rectangles, region_names)
@@ -198,12 +198,12 @@ def update_iptcdata(filepath, new_caption, new_keywords, new_datetime,
         command.append('-RegionRectangle=')
     command.append("-iptc:CodedCharacterSet=ESC % G")
     command.append(filepath)
-    result = su.execandcombine(command)
+    result = su.fsdec(su.execandcombine(command))
     if tmp:
         os.remove(tmp)
     if result.find("1 image files updated") != -1:
         if result != "1 image files updated":
-            print result
+            su.pout(result)
             
         # wipe out the back file created by exiftool
         backup_file = filepath + "_original"
@@ -211,7 +211,7 @@ def update_iptcdata(filepath, new_caption, new_keywords, new_datetime,
             os.remove(backup_file)
         return True
     else:
-        print >> sys.stderr, "Failed to update IPTC data in image %s: %s" % (
-            su.fsenc(filepath), result)
+        su.perr("Failed to update IPTC data in image %s: %s" % (
+            filepath, result))
         return False
     
