@@ -15,7 +15,6 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
-import datetime
 import getpass
 import os
 import re
@@ -33,6 +32,7 @@ import tilutil.exiftool as exiftool
 import tilutil.systemutils as su
 import tilutil.imageutils as imageutils
 import phoshare.phoshare_version
+import phoshare.picasaweb as picasaweb
 
 # Maximum diff in file size to be not considered a change (to allow for
 # meta data updates for example)
@@ -47,7 +47,7 @@ def region_matches(region1, region2):
             return False
     return True
 
-def delete_album_file(album_file, albumdirectory, msg, do_delete, dryrun):
+def delete_album_file(album_file, albumdirectory, msg, options):
     """sanity check - only delete from album directory."""
     if not album_file.startswith(albumdirectory):
         print >> sys.stderr, (
@@ -57,11 +57,11 @@ def delete_album_file(album_file, albumdirectory, msg, do_delete, dryrun):
     if msg:
         print "%s: %s" % (msg, su.fsenc(album_file))
 
-    if not do_delete:
-        if not dryrun:
+    if not options.delete:
+        if not options.dryrun:
             print "Invoke phoshare with the -d option to delete this file."
         return False
-    if dryrun:
+    if options.dryrun:
         return True
 
     try:
@@ -69,7 +69,7 @@ def delete_album_file(album_file, albumdirectory, msg, do_delete, dryrun):
             file_list = os.listdir(album_file)
             for subfile in file_list:
                 delete_album_file(os.path.join(album_file, subfile),
-                                  albumdirectory, msg, do_delete, dryrun)
+                                  albumdirectory, msg, options)
             os.rmdir(album_file)
         else:
             os.remove(album_file)
@@ -112,13 +112,13 @@ def copy_or_link_file(source, target, options):
         elif options.size:
             result = imageutils.resize_image(source, target, options.size)
             if result:
-                su.perr("%s: %s" % (source, result))
+                su.perr(u'%s: %s' % (source, result))
                 return False
         else:
             shutil.copy2(source, target)
         return True
     except (OSError, IOError) as e:
-        su.perr("%s: %s" % (source, e))
+        su.perr(u'%s: %s' % (source, e))
     return False
 
 class ExportFile(object):
@@ -134,13 +134,13 @@ class ExportFile(object):
         self.export_file = os.path.join(
             export_directory, base_name + '.' + extension)
         # Location of "Original" file, if any.
-        originals_folder = "Originals"
+        originals_folder = u"Originals"
         if options.picasa:
             if (os.path.exists(os.path.join(export_directory,
-                                            ".picasaoriginals")) or
+                                            u".picasaoriginals")) or
                 not os.path.exists(os.path.join(export_directory,
-                                                "Originals"))):
-                originals_folder = ".picasaoriginals"
+                                                u"Originals"))):
+                originals_folder = u".picasaoriginals"
         if photo.originalpath:
             self.original_export_file = os.path.join(
                 export_directory, originals_folder, base_name + "." +
@@ -179,13 +179,16 @@ class ExportFile(object):
                 su.pout('Changed:  %s: file size: %d vs. %d' %
                         (self.export_file, export_size, source_size))
                 return True
-        if datetime.datetime.fromtimestamp(os.path.getmtime(
-            self.export_file)) < self.photo.mod_date:
-            su.pout('Changed:  %s: modified in iPhoto: %s vs. %s ' % (
-                self.export_file,
-                time.ctime(os.path.getmtime(self.export_file)),
-                self.photo.mod_date))
-            return True
+        # In link mode, we don't need to check the modification date in the
+        # database because we catch the changes by the size check above.
+        #if (not options.link and
+        #    datetime.datetime.fromtimestamp(os.path.getmtime(
+        #       self.export_file)) < self.photo.mod_date):
+        #    su.pout('Changed:  %s: modified in iPhoto: %s vs. %s ' % (
+        #        self.export_file,
+        #        time.ctime(os.path.getmtime(self.export_file)),
+        #        self.photo.mod_date))
+        #    return True
         return False
 
     def _generate_original(self, options):
@@ -280,9 +283,6 @@ class ExportFile(object):
             for keyword in self.photo.getfaces():
                 if not keyword in new_keywords:
                     new_keywords.append(keyword)
-        for keyword in self.photo.placenames:
-            if not keyword in new_keywords:
-                new_keywords.append(keyword)
         return new_keywords
 
     def _check_person_iptc_data(self, export_file,
@@ -331,48 +331,59 @@ class ExportFile(object):
                                                     "png"):
             return False
 
-        new_caption = imageutils.get_photo_caption(self.photo,
-                                                   options.captiontemplate)
         (file_keywords, file_caption, date_time_original, rating, gps,
-            region_rectangles, region_names) = exiftool.get_iptc_data(
+         region_rectangles, region_names) = exiftool.get_iptc_data(
             export_file)
-        if not su.equalscontent(file_caption, new_caption):
-            su.pout('Updating IPTC for %s because it has Caption "%s" instead '
-                    'of "%s".' % (export_file, file_caption, new_caption))
-        else:
+        if options.aperture:
+            # Aperture maintains all these metadata in the preview files, and
+            # does not even save all the information into the .xml file. 
             new_caption = None
-
-        new_keywords = self.get_export_keywords(options.face_keywords)
-        if not imageutils.compare_keywords(new_keywords, file_keywords):
-            su.pout("Updating IPTC for %s because of keywords (%s instead of "
-                    "%s)" % (export_file, ",".join(file_keywords),
-                             ",".join(new_keywords)))
-        else:
             new_keywords = None
+            new_date = None
+            new_rating = -1
+            new_gps = None
+        else:
+            new_caption = imageutils.get_photo_caption(self.photo,
+                                                       options.captiontemplate)
+            if not su.equalscontent(file_caption, new_caption):
+                su.pout('Updating IPTC for %s because it has Caption "%s" '
+                        'instead of "%s".' % (export_file, file_caption,
+                                              new_caption))
+            else:
+                new_caption = None
 
-        new_date = None
-        if date_time_original != self.photo.date:
-            su.pout("Updating IPTC for %s because of date (%s instead of %s)" %
-                    (export_file, date_time_original, self.photo.date))
-            new_date = self.photo.date
+            new_keywords = self.get_export_keywords(options.face_keywords)
+            if not imageutils.compare_keywords(new_keywords, file_keywords):
+                su.pout("Updating IPTC for %s because of keywords (%s instead "
+                        "of %s)" % (export_file, ",".join(file_keywords),
+                                 ",".join(new_keywords)))
+            else:
+                new_keywords = None
 
-        new_rating = -1
-        if rating != self.photo.rating:
-            su.pout("Updating IPTC for %s because of rating (%d instead of "
-                    "%d)" % (export_file, rating, self.photo.rating))
-            new_rating = self.photo.rating
+            new_date = None
+            if self.photo.date and date_time_original != self.photo.date:
+                su.pout("Updating IPTC for %s because of date (%s instead of "
+                        "%s)" %
+                        (export_file, date_time_original, self.photo.date))
+                new_date = self.photo.date
 
-        new_gps = None
-        if options.gps and self.photo.gps:
-            if (not gps or not self.photo.gps.is_same(gps)):
-                if gps:
-                    old_gps = gps
-                else:
-                    old_gps = imageutils.GpsLocation()
-                su.pout("Updating IPTC for %s because of GPS %s vs %s" %
-                        (export_file, old_gps.to_string(),
-                         self.photo.gps.to_string()))
-                new_gps = self.photo.gps
+            new_rating = -1
+            if self.photo.rating != None and rating != self.photo.rating:
+                su.pout("Updating IPTC for %s because of rating (%d instead of "
+                        "%d)" % (export_file, rating, self.photo.rating))
+                new_rating = self.photo.rating
+
+            new_gps = None
+            if options.gps and self.photo.gps:
+                if (not gps or not self.photo.gps.is_same(gps)):
+                    if gps:
+                        old_gps = gps
+                    else:
+                        old_gps = imageutils.GpsLocation()
+                    su.pout("Updating IPTC for %s because of GPS %s vs %s" %
+                            (export_file, old_gps.to_string(),
+                             self.photo.gps.to_string()))
+                    new_gps = self.photo.gps
 
         # Don't export the faces into the original file (could have been
         # cropped).
@@ -473,8 +484,7 @@ class ExportDirectory(object):
                     continue
                 else:
                     delete_album_file(album_file, self.albumdirectory,
-                                      "Obsolete export directory",
-                                      options.delete, options.dryrun)
+                                      "Obsolete export directory", options)
                     continue
 
             base_name = unicodedata.normalize("NFC",
@@ -484,8 +494,7 @@ class ExportDirectory(object):
             # everything else must have a master, or will have to go
             if master_file is None or not master_file.is_part_of(album_file):
                 delete_album_file(album_file, self.albumdirectory,
-                                  "Obsolete exported file",
-                                  options.delete, options.dryrun)
+                                  "Obsolete exported file", options)
 
     def scan_originals(self, folder, options):
         """Scan a folder of Original images, and delete obsolete ones."""
@@ -498,11 +507,11 @@ class ExportDirectory(object):
             if imageutils.is_ignore(f):
                 continue
 
-            originalfile = os.path.join(folder, f)
+            originalfile = unicodedata.normalize("NFC", os.path.join(folder, f))
             if os.path.isdir(originalfile):
                 delete_album_file(originalfile, self.albumdirectory,
                                   "Obsolete export Originals directory",
-                                  options.delete, options.dryrun)
+                                  options)
                 continue
 
             base_name = unicodedata.normalize("NFC",
@@ -514,8 +523,7 @@ class ExportDirectory(object):
                 originalfile != master_file.original_export_file or
                 master_file.photo.rotation_is_only_edit):
                 delete_album_file(originalfile, originalfile,
-                                  "Obsolete Original",
-                                  options.delete, options.dryrun)
+                                  "Obsolete Original", options)
 
     def generate_files(self, options):
         """Generates the files in the export location."""
@@ -565,7 +573,7 @@ class ExportLibrary(object):
         i = 0
         while True:
             if i > 0:
-                proposed = "%s_(%d)" % (folder, i)
+                proposed = u'%s_(%d)' % (folder, i)
             else:
                 proposed = folder
             if self.named_folders.get(proposed) is None:
@@ -593,14 +601,14 @@ class ExportLibrary(object):
                 sub_name = "xxx"
 
             # check the album type
-            if sub_album.albumtype == "Folder":
+            if sub_album.albumtype == "Folder" or sub_album.albums:
                 sub_matched = matched
                 if include_pattern.match(sub_name):
                     sub_matched = True
-                self.process_albums(sub_album.albums, album_types,
-                                    folder_prefix +
-                                    imageutils.make_foldername(sub_name) +
-                                    "/",
+                new_name = folder_prefix
+                if sub_album.albumtype == "Folder":
+                    new_name += imageutils.make_foldername(sub_name) + "/"
+                self.process_albums(sub_album.albums, album_types, new_name,
                                     includes, excludes, options, sub_matched)
                 continue
             elif (sub_album.albumtype == "None" or
@@ -679,14 +687,13 @@ class ExportLibrary(object):
                 elif not self.check_directories(album_file, rel_path_file,
                                                 album_directories, options):
                     delete_album_file(album_file, directory,
-                                      "Obsolete directory",
-                                      options.delete, options.dryrun)
+                                      "Obsolete directory", options)
             else:
                 # we won't touch some files
                 if imageutils.is_ignore(f):
                     continue
                 delete_album_file(album_file, directory, "Obsolete",
-                                  options.delete, options.dryrun)
+                                  options)
 
         return contains_albums
 
@@ -705,22 +712,22 @@ def export_iphoto(library, data, excludes, options):
 
     print "Scanning iPhoto data for photos to export..."
     if options.events:
-        library.process_albums(data.rolls, ["Event"], "",
+        library.process_albums(data.root_album.albums, ["Event"], u'',
                                options.events, excludes, options)
 
     if options.albums:
         # ignore: Selected Event Album, Special Roll, Special Month
-        library.process_albums(data.masteralbum.albums,
-                               ["Regular", "Published"],
-                               "", options.albums, excludes, options)
+        library.process_albums(data.root_album.albums,
+                               ["Regular", "Published"], u'',
+                               options.albums, excludes, options)
 
     if options.smarts:
-        library.process_albums(data.masteralbum.albums, ["Smart"], "",
+        library.process_albums(data.root_album.albums, ["Smart"], u'',
                                options.smarts, excludes, options)
 
     if options.facealbums:
         library.process_albums(data.getfacealbums(), ["Face"],
-                               options.facealbum_prefix,
+                               unicode(options.facealbum_prefix),
                                ".", excludes, options)
 
     print "Scanning existing files in export folder..."
@@ -833,6 +840,24 @@ def get_option_parser():
                  help='Print build version and exit.')
     return p
 
+def check_aperture_mode(options, parser):
+    """Checks use of options with Aperture library."""
+    if options.originals:
+        parser.error("--originals not available with Aperture (can only "
+                     "export previews.")
+    if options.folderhints:
+        parser.error("--folderhints not supported with Aperture - use "
+                     "Folders.")
+    if options.face_keywords or options.gps or options.ratings:
+        parser.error("Metadata export (--face_keywords, "
+                     "--gps, --ratings) not supported for Aperture. Update "
+                     "your previews to let Aperture update the metadata.")
+    if options.iptc > 0 and options.link:
+        # With Aperture, we cannot modify the preview files, as they get
+        # regenerated automatically by Aperture.
+        parser.error("Cannot use --iptc and --link together with an "
+                     "Aperture library.")        
+            
 def main():
     """main routine for phoshare."""
     parser = get_option_parser()
@@ -877,6 +902,10 @@ def main():
     album_xml_file = iphotodata.get_album_xmlfile(
         su.expand_home_folder(options.iphoto))
     data = iphotodata.get_iphoto_data(album_xml_file)
+    if data.aperture:
+        check_aperture_mode(options, parser)
+ 
+    options.aperture = data.aperture
     options.nametemplate = unicode(options.nametemplate)
     options.captiontemplate = unicode(options.captiontemplate)
 
@@ -886,6 +915,10 @@ def main():
     if options.export:
         album = ExportLibrary(su.expand_home_folder(options.export))
         export_iphoto(album, data, options.exclude, options)
+    if options.picasaweb:
+        albums = picasaweb.PicasaAlbums(options.picasaweb,
+                                        google_password)
+        export_iphoto(albums, data, options.exclude, options)
 
 
 if __name__ == "__main__":

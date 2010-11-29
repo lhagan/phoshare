@@ -15,8 +15,11 @@
 #   limitations under the License.
    
 import datetime
-
+import unicodedata
 from xml import sax
+
+import tilutil.systemutils as su
+
 
 #APPLE_BASE = time.mktime((2001, 1, 1, 0, 0, 0, 0, 0, -1))
 APPLE_BASE = 978307200 # 2001/1/1
@@ -31,7 +34,10 @@ def getappletime(value):
 
 class AppleXMLResolver(sax.handler.EntityResolver): #IGNORE:W0232
     '''Helper to deal with XML entity resolving'''
-    
+
+    def __init__(self):
+        pass
+
     def resolveEntity(self, _publicId, systemId): #IGNORE:C0103
         '''Simple schema, resolve all entities to just the systemId'''
         return systemId
@@ -102,7 +108,10 @@ class AppleXMLHandler(sax.handler.ContentHandler):
         '''callback for the end of a parsed XML element'''
         if name == "key":
             self.key = self.chars
-        elif name in ("string", "integer", "real", "date"):
+        elif name == 'string':
+            self.add_object(
+                unicodedata.normalize("NFC", su.unicode_string(self.chars)))
+        elif name in ("integer", "real", "date"):
             self.add_object(self.chars)
         elif name == "true":
             self.add_object(True)

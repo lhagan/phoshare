@@ -26,7 +26,7 @@ import unicodedata
 CONVERT_TOOL = "convert"
 
 # Image processing tool
-_SIPS_TOOL = "sips"
+_SIPS_TOOL = u"sips"
 
 # TODO: make this list configurable, or better, eliminate the need for it.
 _IGNORE_LIST = ("pspbrwse.jbf", "thumbs.db", "desktop.ini",
@@ -68,7 +68,7 @@ def is_ignore(file_name):
 
 def make_foldername(name):
     """Returns a valid folder name by replacing problematic characters."""
-    result = ""
+    result = u''
     for c in name.strip():
         if c.isdigit() or c.isalpha() or c in (',', ' ', '.', '-'):
             result += c
@@ -80,7 +80,7 @@ def make_foldername(name):
 
 def make_image_filename(name):
     """Returns a valid file name by replacing problematic characters."""
-    result = u""
+    result = u''
     for c in name:
         if c.isalnum() or c.isspace():
             result += c
@@ -169,9 +169,10 @@ def resize_image(input, output, height_width_max, format='jpeg',
     args = [_SIPS_TOOL, '-s', 'format', format]
     if out_height_width_max:
         args.extend(['--resampleHeightWidthMax', '%d' % (out_height_width_max)])
+    # TODO(tilmansp): This has problems with non-ASCII output folders.
     args.extend([input, '--out', output])
-    result = su.execandcombine(args)
-    if result.find('Error:') != -1 or result.find('Warning:') != -1:
+    result = su.fsdec(su.execandcombine(args))
+    if result.find('Error') != -1 or result.find('Warning') != -1:
         return result
     return None
 
@@ -254,8 +255,8 @@ class GpsLocation(object):
           other: the GpsLocation to compare against.
         Returns: True if the two locatoins are the same.
         """
-        return (abs(self.latitude - other.latitude) < self._MIN_GPS_DIFF and
-                abs(self.longitude - other.longitude) < self._MIN_GPS_DIFF)
+        return (abs(self.latitude - other.latitude) <= self._MIN_GPS_DIFF and
+                abs(self.longitude - other.longitude) <= self._MIN_GPS_DIFF)
 
     def to_string(self):
         """Returns the location as a string in (37.645267, -11.419373) format.

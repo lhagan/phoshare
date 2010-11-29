@@ -154,7 +154,7 @@ def update_iptcdata(filepath, new_caption, new_keywords, new_datetime,
     # Some cameras write into ImageDescription, so we wipe it out to not cause
     # conflicts with Caption-Abstract. We also wipe out the XMP Subject and
     # Description tags (we use Keywords and Caption-Abstract).
-    command = [EXIFTOOL, '-F', '-m', '-ImageDescription=', '-Subject=',
+    command = [EXIFTOOL, '-F', '-m', '-P', '-ImageDescription=', '-Subject=',
                '-Description=']
     tmp = None
     if not new_caption is None:

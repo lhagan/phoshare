@@ -524,6 +524,7 @@ Metadata options will be disabled if exiftool is not available.""")
             self.folderhints = False
             self.captiontemplate = u'{description}'
             self.nametemplate = u'{caption}'
+            self.aperture = False # TODO
             self.size = ''  # TODO
             self.picasa = False  # TODO
             self.movies = True  # TODO

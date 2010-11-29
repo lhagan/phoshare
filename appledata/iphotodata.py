@@ -11,7 +11,7 @@ optionally, in zero or more albums. Albums can be nested (folders). The album
 types are:
 Flagged - flagged pictures
 Folder - contains other albums
-Published - an album publishe to MobileMe
+Published - an album published to MobileMe
 Regular - a regular user created album
 SelectedEventAlbum - most recent album (as shown in iPhoto)
 Shelf - list of flagged images
@@ -65,9 +65,10 @@ def parse_face_rectangle(string_data):
 class IPhotoData(object):
     """top level iPhoto data node."""
 
-    def __init__(self, xml_data):
+    def __init__(self, xml_data, is_aperture):
         """# call with results of readAppleXML."""
         self.data = xml_data
+        self.aperture = is_aperture
 
         self.albums = {}
         self.face_albums = None
@@ -95,13 +96,11 @@ class IPhotoData(object):
 
         album_data = self.data.get("List of Albums")
 
-        self.master_album = None
+        self.root_album = IPhotoContainer("", "Root", None, None)
         for data in album_data:
             album = IPhotoAlbum(data, self.images_by_id, self.albums,
-                                self.master_album)
+                                self.root_album)
             self.albums[album.albumid] = album
-            if album.master:
-                self.master_album = album
 
         roll_data = self.data.get("List of Rolls")
         self._rolls = {}
@@ -109,6 +108,7 @@ class IPhotoData(object):
             for roll in roll_data:
                 roll = IPhotoRoll(roll, self.images_by_id)
                 self._rolls[roll.albumid] = roll
+                self.root_album.addalbum(roll)
 
         self.images_by_base_name = None
         self.images_by_file_name = None
@@ -137,10 +137,6 @@ class IPhotoData(object):
     def _getapplicationversion(self):
         return self.data.get("Application Version")
     applicationVersion = property(_getapplicationversion, doc='iPhoto version')
-
-    def _getmasteralbum(self):
-        return self.master_album
-    masteralbum = property(_getmasteralbum, doc="main (master) album")
 
     def _getimages(self):
         return self.images_by_id.values()
@@ -261,11 +257,17 @@ class IPhotoImage(object):
         self.data = data
         self._caption = sysutils.nn_string(data.get("Caption")).strip()
         self.comment = sysutils.nn_string(data.get("Comment")).strip()
-        self.date = applexml.getappletime(data.get("DateAsTimerInterval"))
+        if data.has_key("DateAsTimerInterval"):
+            self.date = applexml.getappletime(data.get("DateAsTimerInterval"))
+        else:
+            self.date = None
         self.mod_date = applexml.getappletime(
             data.get("ModDateAsTimerInterval"))
         self.image_path = data.get("ImagePath")
-        self.rating = int(data.get("Rating"))
+        if data.has_key("Rating"):
+            self.rating = int(data.get("Rating"))
+        else:
+            self.rating = None
         if data.get("longitude"):
             latitude = float(data.get("latitude"))
             longitude = float(data.get("longitude"))
@@ -285,7 +287,6 @@ class IPhotoImage(object):
         self.albums = []  # list of albums that this image belongs to
         self.faces = []
         self.face_rectangles = []
-        self.placenames = []
 
         face_list = data.get("Faces")
         if face_list:
@@ -352,25 +353,55 @@ class IPhotoImage(object):
 class IPhotoContainer(object):
     """Base class for IPhotoAlbum and IPhotoRoll."""
 
-    def __init__(self, data, albumtype, master, images):
+    def __init__(self, name, albumtype, data, images):
+        self.name = name
+        # The iPhoto master album has no album type.
+        if not albumtype and name == 'Photos':
+            albumtype = 'Master'
+            
+        # Convert Aperture numeric album types to iPhoto album type names.
+        if albumtype == '1':
+            albumtype = 'Regular'
+        elif albumtype == '2':
+            albumtype = 'Smart'
+        elif albumtype == '3':
+            albumtype = 'Special'
+        elif albumtype == '4':
+            albumtype = 'Event'
+        elif albumtype == '5':
+            albumtype = 'Library'
+        elif albumtype == '6':
+            albumtype = 'Folder'
+        elif not albumtype:
+            print 'No album type for %s.' % name
+        elif albumtype.isdigit():
+            albumid = int(albumtype)
+            if albumid > 90:
+                # 94 - Photos
+                # 95 - Flagged
+                # 96 - Library Album
+                # 97 - Projects
+                # 98 - Aperture
+                # 99 - Aperture Library
+                albumtype = name
+            else:
+                print 'Unknown album type %s for %s.' % (albumtype, name)
+        self.albumtype = albumtype
         self.data = data
 
-        self.name = ""
-        self.albumtype = albumtype
         self.albumid = -1
         self.images = []
         self.albums = []
-        self.master = master
+        self.master = False
 
-        if not self.isfolder():
+        if not self.isfolder() and data and data.has_key("KeyList"):
             keylist = data.get("KeyList")
             for key in keylist:
                 image = images.get(key)
                 if image:
                     self.images.append(image)
                 else:
-                    print "%s: image with id %s does not exist." % (
-                        self.tostring(), key)
+                    print "%s: image with id %s does not exist." % (name, key)
 
     def _getcomment(self):
         return self.data.get("Comments")
@@ -414,13 +445,14 @@ class IPhotoRoll(IPhotoContainer):
     """Describes an iPhoto Roll or Event."""
 
     def __init__(self, data, images):
-        IPhotoContainer.__init__(self, data, "Event", False, images)
+        IPhotoContainer.__init__(self,
+                                 data.get("RollName")
+                                 if data.has_key("RollName")
+                                 else data.get("AlbumName"),
+                                 "Event", data, images)
         self.albumid = data.get("RollID")
         if not self.albumid:
             self.albumid = data.get("AlbumId")
-        self.name = data.get("RollName")
-        if not self.name:
-            self.name = data.get("AlbumName")
 
     def _getdate(self):
         return applexml.getappletime(self.data.get("RollDateAsTimerInterval"))
@@ -430,23 +462,23 @@ class IPhotoRoll(IPhotoContainer):
 class IPhotoAlbum(IPhotoContainer):
     """Describes an iPhoto Album."""
 
-    def __init__(self, data, images, album_map, master_album):
-        IPhotoContainer.__init__(self, data, data.get("Album Type"),
-                                 data.get("Master"), images)
+    def __init__(self, data, images, album_map, root_album):
+        IPhotoContainer.__init__(self, data.get("AlbumName"),
+                                 data.get("Album Type"),
+                                 data, images)
         self.albumid = data.get("AlbumId")
-        self.name = data.get("AlbumName")
+        if data.has_key("Master"):
+            self.master = True
 
         parent_id = data.get("Parent")
         if parent_id is None:
-            parent_id = -1
-            self.parent = master_album
+            self.parent = root_album
         else:
             self.parent = album_map.get(parent_id)
-        if self.parent is None:
-            if not self.master:
+            if not self.parent:
                 print "Album %s: parent with id %d not found." % (
                     self.name, parent_id)
-        else:
+        if self.parent:
             self.parent.addalbum(self)
 
         # Albums have no date attribute, so we calculate it from the image
@@ -493,13 +525,16 @@ class IPhotoFace(object):
 
 
 def get_album_xmlfile(library_dir):
-    """Locates the iPhoto AlbumData.xml file."""
+    """Locates the iPhoto AlbumData.xml or Aperture ApertureData.xml file."""
     if os.path.exists(library_dir) and os.path.isdir(library_dir):
         album_xml_file = os.path.join(library_dir, "AlbumData.xml")
         if os.path.exists(album_xml_file):
             return album_xml_file
-    raise ValueError, ("%s does not appear to be a valid iPhoto library "
-        "location.") % (library_dir)
+        album_xml_file = os.path.join(library_dir, "ApertureData.xml")
+        if os.path.exists(album_xml_file):
+            return album_xml_file 
+    raise ValueError, ("%s does not appear to be a valid iPhoto or Aperture "
+                       "library location.") % (library_dir)
 
 
 def get_iphoto_data(album_xml_file):
@@ -508,12 +543,17 @@ def get_iphoto_data(album_xml_file):
     print "Reading iPhoto database from " + library_dir + "..."
     album_xml = applexml.read_applexml(album_xml_file)
 
-    data = IPhotoData(album_xml)
-    if (not data.applicationVersion.startswith("9.") and
-        not data.applicationVersion.startswith("8.") and
-        not data.applicationVersion.startswith("7.") and
-        not data.applicationVersion.startswith("6.")):
-        raise ValueError, "iPhoto version %s not supported" % (
-            data.applicationVersion)
+    data = IPhotoData(album_xml, album_xml_file.endswith('ApertureData.xml'))
+    if data.aperture:
+        if not data.applicationVersion.startswith('3.'):
+            raise ValueError, "Aperture version %s not supported" % (
+                data.applicationVersion)
+    else:
+        if (not data.applicationVersion.startswith("9.") and
+            not data.applicationVersion.startswith("8.") and
+            not data.applicationVersion.startswith("7.") and
+            not data.applicationVersion.startswith("6.")):
+            raise ValueError, "iPhoto version %s not supported" % (
+                data.applicationVersion)
 
     return data
