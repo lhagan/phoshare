@@ -19,12 +19,20 @@ Created on May 29, 2009
 #   limitations under the License.
 
 import filecmp
+import logging
 import os
 import subprocess
 import sys
 import unicodedata
 
 _sysenc = sys.getfilesystemencoding()
+
+class _NullHandler(logging.Handler):
+    def emit(self, record):
+        pass
+
+_logger = logging.getLogger("google.systemutils")
+_logger.addHandler(_NullHandler())
 
 def execandcombine(command):
     """execute a shell command, and return all output in a single string."""
@@ -36,6 +44,7 @@ def execandcapture(command):
     """execute a shell command, and return output lines in a sequence."""
     pipe = None
     try:
+        _logger.debug(u' '.join(command))
         pipe = subprocess.Popen(command, shell=False, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT).stdout
         data = []

@@ -16,15 +16,15 @@
 #   limitations under the License.
 
 import getpass
+import logging
 import os
 import re
-import shutil
 import sys
 import time
 import unicodedata
 
 from optparse import OptionParser
-from Carbon.File import ResolveAliasFile
+from Carbon.File import FSResolveAliasFile
 import MacOS
 
 import appledata.iphotodata as iphotodata
@@ -37,6 +37,14 @@ import phoshare.picasaweb as picasaweb
 # Maximum diff in file size to be not considered a change (to allow for
 # meta data updates for example)
 _MAX_FILE_DIFF = 35000
+
+# Fudge factor for file modification times
+_MTIME_FUDGE = 3
+
+_logger = logging.getLogger('google')
+_logger.setLevel(logging.DEBUG)
+
+# create logger
 
 def region_matches(region1, region2):
     """Tests if two regions (rectangles) match."""
@@ -82,45 +90,9 @@ def delete_album_file(album_file, albumdirectory, msg, options):
 def resolve_alias(path):
     """Resolves a path to point to the real file if it is a file system alias.
     """
-    fs, _, _ = ResolveAliasFile(path, 1)
+    fs, _, _ = FSResolveAliasFile(path, 1)
     return su.fsdec(fs.as_pathname())
     
-def copy_or_link_file(source, target, options):
-    """copies, links, or converts an image file."""
-    # looks at options.link and options.update
-    try:
-        if options.size:
-            mode = " (convert)"
-        elif options.link:
-            mode = " (link)"
-        else:
-            mode = " (copy)"
-        if os.path.exists(target):
-            if not options.update:
-                su.pout("Needs update: %s." % target)
-                print "Use the -u option to update this file."
-                return True
-            su.pout("Updating: " + target + mode)
-            if not options.dryrun:
-                os.remove(target)
-        else:
-            su.pout("New file: " + target + mode)
-        if options.dryrun:
-            return False
-        if options.link:
-            os.link(source, target)
-        elif options.size:
-            result = imageutils.resize_image(source, target, options.size)
-            if result:
-                su.perr(u'%s: %s' % (source, result))
-                return False
-        else:
-            shutil.copy2(source, target)
-        return True
-    except (OSError, IOError) as e:
-        su.perr(u'%s: %s' % (source, e))
-    return False
-
 class ExportFile(object):
     """Describes an exported image."""
 
@@ -161,7 +133,8 @@ class ExportFile(object):
         """
         if not os.path.exists(self.export_file):
             return True
-        if os.path.getmtime(self.export_file) < os.path.getmtime(source_file):
+        if (os.path.getmtime(self.export_file) + _MTIME_FUDGE <
+            os.path.getmtime(source_file)):
             su.pout('Changed:  %s: newer version is available: %s vs. %s' %
                     (self.export_file,
                      time.ctime(os.path.getmtime(self.export_file)),
@@ -201,7 +174,7 @@ class ExportFile(object):
                 os.mkdir(export_dir)
         original_source_file = resolve_alias(self.photo.originalpath)
         if os.path.exists(self.original_export_file):
-            if (os.path.getmtime(self.original_export_file) <
+            if (os.path.getmtime(self.original_export_file) + _MTIME_FUDGE <
                 os.path.getmtime(original_source_file)):
                 su.pout('Changed:  %s: newer version is available: %s vs. %s' %
                         (self.original_export_file,
@@ -228,9 +201,14 @@ class ExportFile(object):
                                  is_original=True)
         exists = True  # True if the file exists or was updated.
         if do_original_export:
-            exists = copy_or_link_file(original_source_file,
-                                       self.original_export_file,
-                                       options)
+            exists = imageutils.copy_or_link_file(original_source_file,
+                                                  self.original_export_file,
+                                                  options.dryrun,
+                                                  options.link,
+                                                  options.size,
+                                                  options.update)
+        else:
+            _logger.debug(u'%s up to date.', self.original_export_file)
         if exists and do_iptc and not options.link:
             self.check_iptc_data(self.original_export_file, options,
                                  is_original=True)
@@ -250,8 +228,14 @@ class ExportFile(object):
 
             exists = True  # True if the file exists or was updated.
             if do_export:
-                exists = copy_or_link_file(source_file, self.export_file,
-                                           options)
+                exists = imageutils.copy_or_link_file(source_file,
+                                                      self.export_file,
+                                                      options.dryrun,
+                                                      options.link,
+                                                      options.size,
+                                                      options.update)
+            else:
+                _logger.debug(u'%s up to date.', self.export_file)
 
             # if we copy, we update the IPTC data in the copied file
             if exists and do_iptc and not options.link:
@@ -328,7 +312,7 @@ class ExportFile(object):
         """Tests if a file has the proper keywords and caption in the meta
            data."""
         if not su.getfileextension(export_file) in ("jpg", "tif", "tiff",
-                                                    "png"):
+                                                    "png", "nef", "cr2"):
             return False
 
         (file_keywords, file_caption, date_time_original, rating, gps,
@@ -404,6 +388,8 @@ class ExportFile(object):
         """Checks if <file> is part of this image."""
         return self.export_file == file_name
 
+_YEAR_PATTERN_INDEX = re.compile(r'([0-9][0-9][0-9][0-9]) (.*)')
+
 class ExportDirectory(object):
     """Tracks an album folder in the export location."""
 
@@ -419,42 +405,39 @@ class ExportDirectory(object):
         template = options.nametemplate
 
         if images is not None:
+            entry_digits = len(str(len(images)))
             for image in images:
                 if image.ismovie() and not options.movies:
                     continue
-                base_name = image.caption
-                image_basename = self.make_album_basename(base_name,
-                                                          entries + 1,
-                                                          template)
+                entries += 1
+                image_basename = self.make_album_basename(
+                    image,
+                    entries,
+                    str(entries).zfill(entry_digits),
+                    template)
                 picture_file = ExportFile(image, self.albumdirectory,
                                           image_basename, options)
                 self.files[image_basename] = picture_file
-                entries += 1
 
         return entries
 
-    def make_album_basename(self, orig_basename, index, name_template):
+    def make_album_basename(self, photo, index, padded_index,
+                            name_template):
         """creates unique file name."""
-        album_basename = None
-
-        # default image caption filenames have the file extension on them
-        # already, so remove it or the export filename will look like
-        # "IMG 0087 JPG.jpg"
-        orig_basename = re.sub(
-            re.compile(r'\.(jpeg|jpg|mpg|mpeg|mov|png|tif|tiff)$',
-                       re.IGNORECASE), '', orig_basename)
-        formatted_name = name_template.format(index=index,
-                                              caption=orig_basename)
-        base_name = imageutils.make_image_filename(formatted_name)
+        base_name = imageutils.format_photo_name(photo,
+                                                 self.iphoto_container.name,
+                                                 index,
+                                                 padded_index,
+                                                 name_template)
         index = 0
         while True:
             album_basename = base_name
             if index > 0:
                 album_basename += "_%d" % (index)
             if self.files.get(album_basename) is None:
-                break
+                return album_basename
             index += 1
-        return album_basename
+        return base_name
 
     def load_album(self, options):
         """walks the album directory tree, and scans it for existing files."""
@@ -529,11 +512,7 @@ class ExportDirectory(object):
         """Generates the files in the export location."""
         if not os.path.exists(self.albumdirectory) and not options.dryrun:
             os.makedirs(self.albumdirectory)
-        sorted_files = []
-        for f in self.files:
-            sorted_files.append(f)
-        sorted_files.sort()
-        for f in sorted_files:
+        for f in sorted(self.files):
             self.files[f].generate(options)
 
 
@@ -618,10 +597,14 @@ class ExportLibrary(object):
                 continue
 
             if not matched and not include_pattern.match(sub_name):
+                _logger.debug(u'Skipping "%s" because it does not match pattern.', sub_name)
                 continue
 
             if exclude_pattern and exclude_pattern.match(sub_name):
+                _logger.debug(u'Skipping "%s" because it is excluded.', sub_name)
                 continue
+
+            _logger.debug(u'Loading "%s".', sub_name)
 
             folder_hint = None
             if options.folderhints:
@@ -629,7 +612,9 @@ class ExportLibrary(object):
             prefix = folder_prefix
             if folder_hint is not None:
                 prefix = prefix + imageutils.make_foldername(folder_hint) + "/"
-            sub_name = prefix + imageutils.make_foldername(sub_name)
+            formatted_name = imageutils.format_album_name(
+                sub_album, options.foldertemplate)
+            sub_name = prefix + imageutils.make_foldername(formatted_name)
             sub_name = self._find_unused_folder(sub_name)
 
             # first, do the sub-albums
@@ -782,6 +767,8 @@ def get_option_parser():
                  help="Copy faces into metadata.")
     p.add_option("--folderhints", dest="folderhints", action="store_true",
                  help="Scan event and album descriptions for folder hints.")
+    p.add_option("--foldertemplate", default="{name}",
+                 help="""Template for naming folders. Default: "{name}".""")
     p.add_option("--gps", action="store_true",
                  help="Process GPS location information")
     p.add_option('--ignore',
@@ -808,8 +795,8 @@ def get_option_parser():
       to the exported files might affect the image that is stored in the iPhoto
       library.""")
     p.add_option(
-      "-n", "--nametemplate", default="{caption}",
-      help="""Template for naming image files. Default: "{caption}".""")
+      "-n", "--nametemplate", default="{title}",
+      help="""Template for naming image files. Default: "{title}".""")
     p.add_option("-o", "--originals", action="store_true",
                       help="Export original files into Originals.")
     p.add_option("--picasa", action="store_true",
@@ -842,22 +829,19 @@ def get_option_parser():
 
 def check_aperture_mode(options, parser):
     """Checks use of options with Aperture library."""
-    if options.originals:
-        parser.error("--originals not available with Aperture (can only "
-                     "export previews.")
     if options.folderhints:
         parser.error("--folderhints not supported with Aperture - use "
                      "Folders.")
-    if options.face_keywords or options.gps or options.ratings:
+    if options.face_keywords or options.gps:
         parser.error("Metadata export (--face_keywords, "
-                     "--gps, --ratings) not supported for Aperture. Update "
+                     "--gps) not supported for Aperture. Update "
                      "your previews to let Aperture update the metadata.")
     if options.iptc > 0 and options.link:
         # With Aperture, we cannot modify the preview files, as they get
         # regenerated automatically by Aperture.
         parser.error("Cannot use --iptc and --link together with an "
-                     "Aperture library.")        
-            
+                     "Aperture library.")
+
 def main():
     """main routine for phoshare."""
     parser = get_option_parser()
@@ -899,13 +883,20 @@ def main():
             google_password = getpass.getpass('Google password for %s: ' %
                                               options.picasaweb)
 
+    logging_handler = logging.StreamHandler()
+    logging_handler.setLevel(logging.DEBUG if options.verbose else logging.INFO)
+    _logger.addHandler(logging_handler)
+
     album_xml_file = iphotodata.get_album_xmlfile(
         su.expand_home_folder(options.iphoto))
     data = iphotodata.get_iphoto_data(album_xml_file)
     if data.aperture:
+        if options.originals:
+            data.load_aperture_originals()
         check_aperture_mode(options, parser)
  
     options.aperture = data.aperture
+    options.foldertemplate = unicode(options.foldertemplate)
     options.nametemplate = unicode(options.nametemplate)
     options.captiontemplate = unicode(options.captiontemplate)
 

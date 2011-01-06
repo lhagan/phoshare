@@ -15,6 +15,7 @@
 #   limitations under the License.
 
 import cStringIO
+import logging
 import os
 import platform
 import threading
@@ -24,6 +25,7 @@ import traceback
 
 # pylint: disable-msg=W0614
 from Tkinter import *  #IGNORE:W0401
+from ttk import *
 
 import appledata.iphotodata as iphotodata
 import phoshare.phoshare_main as phoshare_main
@@ -38,6 +40,9 @@ import Queue
 
 _CONFIG_PATH = su.expand_home_folder('~/Library/Application Support/Google/'
                                      'Phoshare/phoshare.cfg')
+_BOLD_FONT = ('helvetica', 12, 'bold')
+
+_logger = logging.getLogger('google')
 
 def _int_from_bool(boolean_value):
     """Converts a boolean value to an integer of 0 or 1."""
@@ -63,20 +68,23 @@ class ExportApp(Frame):
 
     def __init__(self, master=None):
         """Initialize the app, setting up the UI."""
-        Frame.__init__(self, master, bd=10)
+        Frame.__init__(self, master, padding=10)
 
         top = self.winfo_toplevel()
         menu_bar = Menu(top)
         top["menu"] = menu_bar
-        
-        sub_menu = Menu(menu_bar)
+
+        apple = Menu(menu_bar, name='apple')
+        menu_bar.add_cascade(label='Phoshare', menu=apple)
+        apple.add_command(label="About Phoshare", command=self.__aboutHandler)
+
+        sub_menu = Menu(menu_bar, name='help')
         menu_bar.add_cascade(label="Help", menu=sub_menu)
-        sub_menu.add_command(label="About Phoshare",
-                             command=self.__aboutHandler)
+        sub_menu.add_command(label="Phoshare Help", command=self.help_buttons)
 
         self.thread_queue = Queue.Queue(maxsize=100)
         self.active_library = None
-        
+
         top.columnconfigure(0, weight=1)
         top.rowconfigure(0, weight=1)
         self.grid(sticky=N+S+E+W)
@@ -98,6 +106,10 @@ class ExportApp(Frame):
         self.albums = StringVar()
         self.smarts = StringVar()
 
+        self.foldertemplate = StringVar()
+        self.nametemplate = StringVar()
+        self.captiontemplate = StringVar()
+
         self.update_var = IntVar()
         self.delete_var = IntVar()
         self.originals_var = IntVar()
@@ -117,10 +129,16 @@ class ExportApp(Frame):
 
         self.gps_box = None
         self.gps_var = IntVar()
+        self.verbose_var = IntVar()
 
         self.info_icon = PhotoImage(file="info-b16.gif")
 
         self.create_widgets()
+
+        # Set up logging so it gets redirected to the text area in the app.
+        self.logging_handler = logging.StreamHandler(self)
+        self.logging_handler.setLevel(logging.WARN)
+        _logger.addHandler(self.logging_handler)
 
     def __aboutHandler(self):
         HelpDialog(self, """%s %s
@@ -132,7 +150,7 @@ http://code.google.com/p/phoshare""" % (phoshare_version.PHOSHARE_VERSION,
                    title="About Phoshare")
 
     def init(self):
-        """Initializes processing by launching background thread checker and 
+        """Initializes processing by launching background thread checker and
            initial iPhoto library check."""
         self.thread_checker()
         if exiftool.check_exif_tool(sys.stdout):
@@ -144,7 +162,7 @@ http://code.google.com/p/phoshare""" % (phoshare_version.PHOSHARE_VERSION,
             self.gps_box.configure(state=NORMAL)
 
         options = self.Options()
-        options.load()      
+        options.load()
         self.init_from_options(options)
         self.check_iphoto_library()
 
@@ -155,6 +173,9 @@ http://code.google.com/p/phoshare""" % (phoshare_version.PHOSHARE_VERSION,
         self.albums.set(su.fsdec(options.albums))
         self.events.set(su.fsdec(options.events))
         self.smarts.set(su.fsdec(options.smarts))
+        self.foldertemplate.set(su.unicode_string(options.foldertemplate))
+        self.nametemplate.set(su.unicode_string(options.nametemplate))
+        self.captiontemplate.set(su.unicode_string(options.captiontemplate))
         self.update_var.set(_int_from_bool(options.update))
         self.delete_var.set(_int_from_bool(options.delete))
         self.originals_var.set(_int_from_bool(options.originals))
@@ -171,158 +192,211 @@ http://code.google.com/p/phoshare""" % (phoshare_version.PHOSHARE_VERSION,
                 self.iptc_all_var.set(1)
         self.gps_var.set(_int_from_bool(options.gps) and self.exiftool)
 
-    def create_widgets(self):
-        """Builds the UI."""
-        bold_font = ('helvetica', 12, 'bold')
-        self.columnconfigure(2, weight=1)
+    def _add_section(self, container, text, help_command):
+        """Adds a new UI section with a bold label and an info button.
+
+        Args:
+          container: UI element that will contain this new item
+          row: row number in grid. Uses two rows.
+          text: label frame text.
+          help_command: command to run when the info button is pressed.
+        Returns: tuple of new section and content frames.
+        """
+        section_frame = Frame(container)
+        section_frame.columnconfigure(0, weight=1)
+        label = Label(section_frame, text=text)
+        label.config(font=_BOLD_FONT)
+        label.grid(row=0, column=0, sticky=W, pady=5)
+        Button(section_frame, image=self.info_icon,
+               command=help_command).grid(row=0, column=1, sticky=E)
+
+        content_frame = Frame(section_frame)
+        content_frame.grid(row= 1, column=0, columnspan=2, sticky=N+S+E+W, pady=5)
+
+        return (section_frame, content_frame)
+
+    def _create_button_bar(self, container, row):
+        """Creates the button bar with the Dry Run and Export buttons.
+
+        Args:
+          row: row number in grid.
+        Returns: next row number in grid.
+        """
+        button_bar = Frame(container)
+        button_bar.grid(row=row, column=0, sticky=E+W, padx=10)
+        button_bar.columnconfigure(0, weight=1)
+        verbose_box = Checkbutton(button_bar, text="Show debug output", var=self.verbose_var)
+        verbose_box.grid(row=0, column=0, sticky=E)
+        self.dryrun_button = Button(button_bar, text="Dry Run",
+                                    command=self.do_dryrun, state=DISABLED)
+        self.dryrun_button.grid(row=0, column=1, sticky=E, pady=5)
+        self.export_button = Button(button_bar, text="Export",
+                                    command=self.do_export, state=DISABLED)
+        self.export_button.grid(row=0, column=2, pady=5)
+        return row + 1
+
+    def _create_library_tab(self, library_tab):
+        library_tab.columnconfigure(0, weight=1)
         row = 0
-        Label(self, text="iPhoto Library:").grid(sticky=E)
-        iphoto_library_entry = Entry(self, textvariable=self.iphoto_library)
-        iphoto_library_entry.grid(row=row, column=1, columnspan=2, sticky=E+W)
-        self.browse_library_button = Button(self, text="Browse...",
+
+        f = Frame(library_tab)
+        f.grid(row=row, columnspan=2, stick=E+W, padx=5, pady=5)
+        row += 1
+        f.columnconfigure(1, weight=1)
+
+        Label(f, text="iPhoto Library:").grid(sticky=E)
+        iphoto_library_entry = Entry(f, textvariable=self.iphoto_library)
+        iphoto_library_entry.grid(row=0, column=1, sticky=E+W)
+        self.browse_library_button = Button(f, text="Browse...",
                                             command=self.browse_library)
-        self.browse_library_button.grid(row=row, column=3)
+        self.browse_library_button.grid(row=0, column=2)
 
+        self.library_status = Label(f, textvariable=self.iphoto_library_status)
+        self.library_status.grid(row=1, column=1, sticky=W)
+
+        (cf, lf) = self._add_section(library_tab, "Events, Albums and Smart Albums",
+                                     self.help_events)
+        cf.grid(row=row, columnspan=2, stick=E+W)
         row += 1
-        self.library_status = Label(self, 
-                                    textvariable=self.iphoto_library_status)
-        self.library_status.grid(row=row, column=1, columnspan=2, sticky=W)
+        lf.columnconfigure(1, weight=1)
+        Label(lf, text="Events:").grid(sticky=E)
+        events_entry = Entry(lf, textvariable=self.events)
+        events_entry.grid(row=0, column=1, sticky=EW)
 
+        Label(lf, text="Albums:").grid(sticky=E)
+        albums_entry = Entry(lf, textvariable=self.albums)
+        albums_entry.grid(row=1, column=1, sticky=EW)
+
+        Label(lf, text="Smart Albums:").grid(sticky=E)
+        smarts_entry = Entry(lf, textvariable=self.smarts)
+        smarts_entry.grid(row=2, column=1, columnspan=3, sticky=EW)
+
+    def _create_files_tab(self, files_tab):
+        files_tab.columnconfigure(0, weight=1)
+        # Export folder and options
+        row = 0
+        (cf, lf) = self._add_section(files_tab, "Export Folder and Options", self.help_export)
+        cf.grid(row=row, columnspan=2, stick=E+W)
         row += 1
-        label = Label(self, text="Events, Albums and Smart Albums")
-        label.config(font=bold_font)
-        label.grid(row=row, column=0, columnspan=3, sticky=W, pady=5)
-
-        b = Button(self, command=self.help_events, image=self.info_icon,
-                   borderwidth=0)
-        b.grid(row=row, column=3, sticky=E, pady=5)
-
-        row += 1
-        Label(self, text="Events:").grid(sticky=E)
-        events_entry = Entry(self, textvariable=self.events)
-        events_entry.grid(row=row, column=1, columnspan=3, sticky=EW)
-
-        row += 1
-        Label(self, text="Albums:").grid(sticky=E)
-        albums_entry = Entry(self, textvariable=self.albums)
-        albums_entry.grid(row=row, column=1, columnspan=3, sticky=EW)
-
-        row += 1
-        Label(self, text="Smart Albums:").grid(sticky=E)
-        smarts_entry = Entry(self, textvariable=self.smarts)
-        smarts_entry.grid(row=row, column=1, columnspan=3, sticky=EW)
-
-        row += 1
-        label = Label(self, text="Export Folder and Options")
-        label.config(font=bold_font)
-        label.grid(row=row, column=0, columnspan=4, sticky=W, pady=5)
-
-        Button(self, image=self.info_icon, borderwidth=0,
-               command=self.help_export).grid(row=row, column=3, sticky=E,
-                                              pady=5)
-
-        row += 1
-        label = Label(self, text="Export Folder:")
+        lf.columnconfigure(1, weight=1)
+        label = Label(lf, text="Export Folder:")
         label.grid(sticky=E)
-        export_folder_entry = Entry(self, textvariable=self.export_folder)
-        export_folder_entry.grid(row=row, column=1, columnspan=2, sticky=E+W)
-        Button(self, text="Browse...", 
-               command=self.browse_export).grid(row=row, column=3)
+        export_folder_entry = Entry(lf, textvariable=self.export_folder)
+        export_folder_entry.grid(row=0, column=1, columnspan=2, sticky=E+W)
+        Button(lf, text="Browse...",
+               command=self.browse_export).grid(row=0, column=3)
 
-        row += 1
-        update_box = Checkbutton(self, text="Overwrite changed pictures", 
+        update_box = Checkbutton(lf, text="Overwrite changed pictures",
                                  var=self.update_var)
-        update_box.grid(row=row, column=1, sticky=W)
-        originals_box = Checkbutton(self, text="Export originals", 
+        update_box.grid(row=1, column=1, sticky=W)
+        originals_box = Checkbutton(lf, text="Export originals",
                                     var=self.originals_var)
-        originals_box.grid(row=row, column=2, sticky=W)
-        hint_box = Checkbutton(self, text="Use folder hints", 
+        originals_box.grid(row=2, column=1, sticky=W)
+        hint_box = Checkbutton(lf, text="Use folder hints",
                                var=self.folder_hints_var)
-        hint_box.grid(row=row, column=3, sticky=W)
+        hint_box.grid(row=3, column=1, sticky=W)
 
-        row += 1
-        delete_box = Checkbutton(self, text="Delete obsolete pictures", 
+        delete_box = Checkbutton(lf, text="Delete obsolete pictures",
                                  var=self.delete_var)
-        delete_box.grid(row=row, column=1, sticky=W)
-        link_box = Checkbutton(self, text="Use file links", var=self.link_var)
-        link_box.grid(row=row, column=2, columnspan=2, sticky=W)
+        delete_box.grid(row=4, column=1, sticky=W)
+        link_box = Checkbutton(lf, text="Use file links", var=self.link_var)
+        link_box.grid(row=5, column=1, sticky=W)
 
+        # Templates ----------------------------------------
+        (cf, lf) = self._add_section(files_tab, "Name Templates", self.help_templates)
+        cf.grid(row=row, columnspan=2, stick=E+W)
         row += 1
-        label = Label(self, text="Faces")
-        label.config(font=bold_font)
-        label.grid(row=row, column=0, columnspan=4, sticky=W, pady=5)
-        Button(self, image=self.info_icon, borderwidth=0,
-               command=self.help_faces).grid(row=row, column=3, sticky=E,
-                                             pady=5)
+        lf.columnconfigure(1, weight=1)
+        Label(lf, text="Folder names:").grid(sticky=E)
+        foldertemplate_entry = Entry(lf, textvariable=self.foldertemplate)
+        foldertemplate_entry.grid(row=0, column=1, sticky=EW)
 
+        Label(lf, text="File names:").grid(sticky=E)
+        nametemplate_entry = Entry(lf, textvariable=self.nametemplate)
+        nametemplate_entry.grid(row=1, column=1, sticky=EW)
+
+        Label(lf, text="Captions:").grid(sticky=E)
+        captiontemplate_entry = Entry(lf, textvariable=self.captiontemplate)
+        captiontemplate_entry.grid(row=2, column=1, sticky=EW)
+
+    def _create_metadata_tab(self, metadata_tab):
+        metadata_tab.columnconfigure(0, weight=1)
+        row = 0
+        # Metadata --------------------------------------------
+        (cf, lf) = self._add_section(metadata_tab, "Metadata", self.help_metadata)
+        cf.grid(row=row, columnspan=2, stick=E+W)
         row += 1
-        self.faces_box = Checkbutton(self, text="Copy faces into metadata", 
-                                     var=self.faces_var, state=DISABLED,
-                                     command=self.change_metadata_box)
-        self.faces_box.grid(row=row, column=1, sticky=W)
-
-        self.face_keywords_box = Checkbutton(
-            self, 
-            text="Copy face names into keywords", 
-            var=self.face_keywords_var,
-            command=self.change_metadata_box,
-            state=DISABLED)
-        self.face_keywords_box.grid(row=row, column=2, columnspan=2, sticky=W)
-
-        row += 1
-        checkbutton = Checkbutton(self, text="Export faces into folders", 
-                                  var=self.face_albums_var)
-        checkbutton.grid(row=row, column=1, sticky=W)
-        label = Label(self, text="Faces folder prefix:")
-        label.grid(row=row, column=2, sticky=E)
-        entry = Entry(self, textvariable=self.face_albums_text)
-        entry.grid(row=row, column=3, sticky=E+W)
-
-        row += 1
-        label = Label(self, text="Metadata")
-        label.config(font=bold_font)
-        label.grid(row=row, column=0, columnspan=4, sticky=W, pady=5)
-
-        Button(self, image=self.info_icon, borderwidth=0,
-               command=self.help_metadata).grid(row=row, column=3, sticky=E,
-                                                pady=5)
-
-        row += 1
-        self.iptc_box = Checkbutton(self,
+        self.iptc_box = Checkbutton(lf,
                                     text=("Export metadata (descriptions, "
                                           "keywords, ratings, dates)"),
                                     var=self.iptc_var, state=DISABLED,
                                     command=self.change_iptc_box)
-        self.iptc_box.grid(row=row, column=1, columnspan=3, sticky=W)
+        self.iptc_box.grid(row=0, column=0, columnspan=2, sticky=W)
 
-        row += 1
-        self.iptc_all_box = Checkbutton(self,
-                                        text="Verify existing images",
+        self.iptc_all_box = Checkbutton(lf,
+                                        text="Check previously exported images",
                                         var=self.iptc_all_var,
                                         command=self.change_metadata_box,
                                         state=DISABLED)
-        self.iptc_all_box.grid(row=row, column=1, sticky=W)
+        self.iptc_all_box.grid(row=1, column=0, sticky=W)
 
-        self.gps_box = Checkbutton(self,
+        self.gps_box = Checkbutton(lf,
                                    text="Export GPS data",
                                    var=self.gps_var,
                                    command=self.change_metadata_box,
                                    state=DISABLED)
-        self.gps_box.grid(row=row, column=2, sticky=W)
+        self.gps_box.grid(row=2, column=0, sticky=W)
 
+        # Faces ---------------------------------------------------
+        (cf, lf) = self._add_section(metadata_tab, "Faces", self.help_faces)
+        cf.grid(row=row, columnspan=2, stick=E+W)
         row += 1
-        self.dryrun_button = Button(self, text="Dry Run", 
-                                    command=self.do_dryrun, state=DISABLED)
-        self.dryrun_button.grid(row=row, column=2, stick=E, pady=5)
-        self.export_button = Button(self, text="Export", 
-                                    command=self.do_export, state=DISABLED)
-        self.export_button.grid(row=row, column=3, pady=5)
+        lf.columnconfigure(2, weight=1)
+        self.faces_box = Checkbutton(lf, text="Copy faces into metadata",
+                                     var=self.faces_var, state=DISABLED,
+                                     command=self.change_metadata_box)
+        self.faces_box.grid(row=0, column=0, sticky=W)
 
-        row += 1
+        self.face_keywords_box = Checkbutton(
+            lf,
+            text="Copy face names into keywords",
+            var=self.face_keywords_var,
+            command=self.change_metadata_box,
+            state=DISABLED)
+        self.face_keywords_box.grid(row=1, column=0, sticky=W)
+
+        checkbutton = Checkbutton(lf, text="Export faces into folders",
+                                  var=self.face_albums_var)
+        checkbutton.grid(row=2, column=0, sticky=W)
+        label = Label(lf, text="Faces folder prefix:")
+        label.grid(row=2, column=1, sticky=E)
+        entry = Entry(lf, textvariable=self.face_albums_text)
+        entry.grid(row=2, column=2, sticky=E+W)
+
+    def create_widgets(self):
+        """Builds the UI."""
+        self.columnconfigure(0, weight=1)
+        n = Notebook(self)
+        n.grid(row=0, sticky=E+W+N+S)
+
+        library_tab = Frame(n)
+        n.add(library_tab, text='Library')
+        self._create_library_tab(library_tab)
+
+        files_tab = Frame(n)
+        n.add(files_tab, text='Files')
+        self._create_files_tab(files_tab)
+
+        metadata_tab = Frame(n)
+        n.add(metadata_tab, text='Metadata')
+        self._create_metadata_tab(metadata_tab)
+
+        self._create_button_bar(self, 1)
+
         self.text = ScrolledText(self, borderwidth=4, relief=RIDGE, padx=4,
                                  pady=4)
-        self.text.grid(row=row, column=0, columnspan=4, sticky=E+W+N+S)
-        self.rowconfigure(row, weight=1)
+        self.text.grid(row=2, column=0, sticky=E+W+N+S)
+        self.rowconfigure(2, weight=1)
 
     def change_iptc_box(self):
         """Clears some options that depend on the metadata export option."""
@@ -340,7 +414,7 @@ http://code.google.com/p/phoshare""" % (phoshare_version.PHOSHARE_VERSION,
                 self.iptc_all_var.get() or self.gps_var.get())
         if mode:
             self.iptc_var.set(1)
-            
+
     def help_events(self):
         HelpDialog(self, """Events, Albums and Smart Albums
 
@@ -362,7 +436,74 @@ will export all events. To export all events with "2008" in the name, use
 
 For more details on regular expressions, see
     http://en.wikipedia.org/wiki/Regular_expression""")
-        
+
+    def help_templates(self):
+        HelpDialog(self, """Folder, file, and image caption templates.
+
+Templates are strings with place holders for values. The place holders have
+the format "{name}". Everything else in the template will be copied. Examples:
+  {title}
+  {yyyy}/{mm}/{dd} {title} - generates "2010/12/31 My Birthday" if the date
+      of the pictures is Dec 31, 2010, and the title is "My Birthday".
+  {yyyy} Event: {event} - generates "2010 Event: Birthday" for an event with
+      any date in 2010 and the name "Birthday".
+
+Available place holders for folder names:
+  {name} - name of the album or event.
+  {hint} - folder hint (taken from line event or album description starting with
+           @).
+  {yyyy} - year of album or event date.
+  {mm} - month of album or event date.
+  {dd} - date of album or event date.
+
+Available place holders for file names:
+  {album} - name of album (or in the case of an event, the name of the event).
+  {index} - number of image in album, starting at 1.
+  {index0} - number of image in album, padded with 0s, so that all numbers have
+             the same length.
+  {event} - name of the event. In the case of an album, the name of the event
+            to which the image belongs.
+  {event_index} - number of image in the event, starting at 1. If the case of an
+                  album, this number will be based on the event to which the
+                  image belongs.
+  {event_index0} - same as {event_index}, but padded with leading 0s so that all
+                   values have the same length.
+  {title} - image title.
+  {yyyy} - year of image.
+  {mm} - month of image (01 - 12).
+  {dd} - day of image (01 - 31).
+
+  If you are using {album}/{index}/{index0} place holders, the image will be
+  named based on whatever album or event it is contained. That means an image
+  in two albums will be exported with different names, even so the files are
+  identical. If you want to use the same name for each image, regardless of
+  which album it is in, use {event}, {event_index}, and {event_index0} instead.
+
+Available place holders for captions:
+  {title} - image title.
+  {description} - image description.
+  {title_description} - concatenated image title and description, separated by a
+                        : if both are set.
+  {yyyy} - year of image.
+  {mm} - month of image (01 - 12).
+  {dd} - day of image (01 - 31).
+""")
+
+    def help_buttons(self):
+        HelpDialog(self, """Export modes.
+
+Click on "Dry Run" to see what Phoshare would do without actually modifying any
+files.
+
+Click on "Export" to export your files using the current settings.
+
+All your settings will be saved when you click either Dry Run and Export, and
+re-loaded if you restart Phoshare.
+
+Check "Show debug output" to generate additional output message that can assist
+in debugging Phoshare problems.
+""")
+
     def help_export(self):
         HelpDialog(self, """Export Settings
 
@@ -403,7 +544,7 @@ Use file links: Don't copy images during export, but make a link to the files
                 of your iPhoto library, and you know how to restore your library
                 from the backup. For more details on link mode, see
                 https://sites.google.com/site/phosharedoc/Home#TOC-link-mode""")
-        
+
     def help_faces(self):
         HelpDialog(self, """Faces options.
 
@@ -426,14 +567,14 @@ Faces folder prefix: If set, the string will be used as a prefix for the
 
 Metadata options will be disabled if exiftool is not available.
 """)
-        
+
     def help_metadata(self):
         HelpDialog(self, """Metadata options.
 
 Export metadata: sets the description, keywords, rating and date metadata in the
                  exported images to match the iPhoto settings.
 
-Verify existing images: If not checked, metadata will only be set for new or
+Check previously exported images: If not checked, metadata will only be set for new or
                         updated images. If checked, metadata will be checked in
                         all images, including ones that were previously
                         exported. This is much slower.
@@ -441,7 +582,7 @@ Verify existing images: If not checked, metadata will only be set for new or
 Export GPS data: export the GPS coordinates into the image metadata.
 
 Metadata options will be disabled if exiftool is not available.""")
-        
+
     def check_iphoto_library(self):
         self.valid_library = False
         self.enable_buttons()
@@ -499,7 +640,7 @@ Metadata options will be disabled if exiftool is not available.""")
     def stop_thread(self):
         if self.active_library:
             self.active_library.abort()
-        
+
     def export_done(self):
         self.active_library = None
         self.dryrun_button.config(text="Dry Run")
@@ -507,7 +648,7 @@ Metadata options will be disabled if exiftool is not available.""")
         self.enable_buttons()
 
     class Options(object):
-        """Simple helper to create an object compatible with the OptionParser 
+        """Simple helper to create an object compatible with the OptionParser
         output in Phoshare.py."""
 
         def __init__(self):
@@ -519,11 +660,12 @@ Metadata options will be disabled if exiftool is not available.""")
             self.ignore = []
             self.delete = False
             self.update = False
-            self.link = False 
+            self.link = False
             self.dryrun = False
             self.folderhints = False
             self.captiontemplate = u'{description}'
-            self.nametemplate = u'{caption}'
+            self.foldertemplate = u'{name}'
+            self.nametemplate = u'{title}'
             self.aperture = False # TODO
             self.size = ''  # TODO
             self.picasa = False  # TODO
@@ -555,6 +697,12 @@ Metadata options will be disabled if exiftool is not available.""")
                 self.events = config.get(s, 'events')
             if config.has_option(s, 'smarts'):
                 self.smarts = config.get(s, 'smarts')
+            if config.has_option(s, 'foldertemplate'):
+                self.foldertemplate = config.get(s, 'foldertemplate')
+            if config.has_option(s, 'nametemplate'):
+                self.nametemplate = config.get(s, 'nametemplate')
+            if config.has_option(s, 'captiontemplate'):
+                self.captiontemplate = config.get(s, 'captiontemplate')
             if config.has_option(s, 'delete'):
                 self.delete = config.getboolean(s, 'delete')
             if config.has_option(s, 'update'):
@@ -599,6 +747,9 @@ Metadata options will be disabled if exiftool is not available.""")
             config.set(s, 'albums', su.fsenc(self.albums))
             config.set(s, 'events', su.fsenc(self.events))
             config.set(s, 'smarts', su.fsenc(self.smarts))
+            config.set(s, 'foldertemplate', su.fsenc(self.foldertemplate))
+            config.set(s, 'nametemplate', su.fsenc(self.nametemplate))
+            config.set(s, 'captiontemplate', su.fsenc(self.captiontemplate))
             config.set(s, 'delete', self.delete)
             config.set(s, 'update', self.update)
             config.set(s, 'link', self.link)
@@ -625,7 +776,7 @@ Metadata options will be disabled if exiftool is not available.""")
             configfile.close()
 
     def can_export(self):
-        if (not self.albums.get() and not self.events.get() and 
+        if (not self.albums.get() and not self.events.get() and
             not self.smarts.get()):
             tkMessageBox.showerror(
                 "Export Error",
@@ -689,6 +840,18 @@ Metadata options will be disabled if exiftool is not available.""")
             options.smarts = self.smarts.get()
             if options.smarts:
                 args.extend(['--smarts', '"' + options.smarts + '"'])
+            options.foldertemplate = unicode(self.foldertemplate.get())
+            if options.foldertemplate:
+                args.extend(['--foldertemplate', '"' +
+                             options.foldertemplate + '"'])
+            options.nametemplate = unicode(self.nametemplate.get())
+            if options.nametemplate:
+                args.extend(['--nametemplate', '"' +
+                             options.nametemplate + '"'])
+            options.captiontemplate = unicode(self.captiontemplate.get())
+            if options.captiontemplate:
+                args.extend(['--captiontemplate', '"' +
+                             options.captiontemplate + '"'])
             options.ignore = []  # TODO
             options.update = self.update_var.get() == 1
             if options.update:
@@ -728,20 +891,22 @@ Metadata options will be disabled if exiftool is not available.""")
             options.facealbum_prefix = self.face_albums_text.get()
             if options.facealbum_prefix:
                 args.append('--facealbum_prefix')
-            
+
             exclude = None # TODO
 
             options.save()
             print " ".join(args)
+
+            self.logging_handler.setLevel(logging.DEBUG if self.verbose_var.get() else logging.INFO)
             self.active_library = phoshare_main.ExportLibrary(export_folder)
-            phoshare_main.export_iphoto(self.active_library, data, exclude, 
+            phoshare_main.export_iphoto(self.active_library, data, exclude,
                                         options)
             self.thread_queue.put(("done", (True, mode, '')))
         except Exception, e:  # IGNORE:W0703
             self.thread_queue.put(("done",
                                    (False, mode,
                                     str(e) + '\n\n' + traceback.format_exc())))
-        
+
     def thread_checker(self, delay_ms=100):        # 10x per second
         """Processes any queued up messages in the thread queue. Once the queue
         is empty, schedules another check after a short delay.
@@ -784,12 +949,12 @@ Metadata options will be disabled if exiftool is not available.""")
         """Writes text to the progress area of the UI. Uses the thread queue,
         and can be called from a non-UI thread."""
         self.thread_queue.put(("write", text))
-        
+
     def writelines(self, lines):  # lines already have '\n'
         """Writes text to the progress area of the UI. Uses the thread queue,
         and can be called from a non-UI thread."""
         for line in lines:
-            self.write(line)     
+            self.write(line)
 
 
 def main():
@@ -811,7 +976,7 @@ def main():
         app.write_progress('\nMac version: %s\n' % (platform.mac_ver()[0]))
         app.write_progress('Python version: %s\n' % (platform.python_version()))
         tkMessageBox.showerror(
-            'Phoshare Error', 
+            'Phoshare Error',
             'Phoshare encountered a serious problem and will shut down. '
             'Please copy the information shown in the application output panel '
             'when reporting this problem at\n'

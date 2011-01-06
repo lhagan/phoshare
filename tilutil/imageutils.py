@@ -17,7 +17,10 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
+import logging
+import os
 import re
+import shutil
 import sys
 import tilutil.systemutils as su
 import unicodedata
@@ -35,6 +38,13 @@ _IGNORE_LIST = ("pspbrwse.jbf", "thumbs.db", "desktop.ini",
                 "albumdata.xml", "albumdata2.xml", "pkginfo", "imovie data",
                 "dir.data", "iphoto.ipspot", "iphotolock.data", "library.data",
                 "library.iphoto", "library6.iphoto", "caches")
+
+class _NullHandler(logging.Handler):
+    def emit(self, record):
+        pass
+
+_logger = logging.getLogger("google.imageutils")
+_logger.addHandler(_NullHandler())
 
 def check_convert():
     """Tests if ImageMagick convert tool is available. Prints error message
@@ -94,7 +104,8 @@ def make_image_filename(name):
 
 def is_image_file(file_name):
     """Tests if the file (name or full path) is an image file."""
-    return su.getfileextension(file_name) in ("jpg", "jpeg", "tif", "png")
+    return su.getfileextension(file_name) in ("jpg", "jpeg", "tif", "png",
+                                              "nef")
 
 def is_movie_file(file_name):
     """Tests if the file (name or full path) is a movie file."""
@@ -140,16 +151,16 @@ def get_image_width_height(file_name):
             width = _get_integer(line[12:])
     return (width, height)
 
-def resize_image(input, output, height_width_max, format='jpeg',
+def resize_image(source, output, height_width_max, out_format='jpeg',
                  enlarge=False):
     """Converts an image to a new format and resizes it.
 
     Args:
-      input: path to input image file.
+      source: path to inputimage file.
       output: path to output image file.
       height_width_max: resize image so height and width aren't greater
           than this value.
-      format: output file format (like "jpeg")
+      out_format: output file format (like "jpeg")
       enlarge: if set, enlarge images that are smaller than height_width_max.
 
     Returns:
@@ -157,20 +168,20 @@ def resize_image(input, output, height_width_max, format='jpeg',
     """
     # To use ImageMagick:
     #result = su.execandcombine(
-    #    [imageutils.CONVERT_TOOL, input, '-delete', '1--1', '-quality', '90%',
+    #    [imageutils.CONVERT_TOOL, source, '-delete', '1--1', '-quality', '90%',
     #    '-resize', "%dx%d^" % (height_width_max, height_width_max),output])
     out_height_width_max = 0
     if enlarge:
         out_height_width_max = height_width_max
     else:
-        (width, height) = get_image_width_height(input)
+        (width, height) = get_image_width_height(source)
         if height > height_width_max or width > height_width_max:
             out_height_width_max = height_width_max
-    args = [_SIPS_TOOL, '-s', 'format', format]
+    args = [_SIPS_TOOL, '-s', 'format', out_format]
     if out_height_width_max:
         args.extend(['--resampleHeightWidthMax', '%d' % (out_height_width_max)])
     # TODO(tilmansp): This has problems with non-ASCII output folders.
-    args.extend([input, '--out', output])
+    args.extend([source, '--out', output])
     result = su.fsdec(su.execandcombine(args))
     if result.find('Error') != -1 or result.find('Warning') != -1:
         return result
@@ -195,7 +206,9 @@ def compare_keywords(new_keywords, old_keywords):
 class GpsLocation(object):
     """Tracks a Gps location (without altitude), as latitude and longitude.
     """
-    _MIN_GPS_DIFF = 0.0000005
+    # How much rounding "error" do we allow for two GPS coordinates
+    # to be considered identical.
+    _MIN_GPS_DIFF = 0.0000007
 
     def __init__(self, latitude=0.0, longitude=0.0):
         """Constructs a GpsLocation object."""
@@ -280,23 +293,156 @@ def get_photo_caption(photo, caption_template):
          photo - an IPhotoImage photo.
          caption_template - a format string.
     """
-    result = photo.caption
-    m = re.match(_CAPTION_PATTERN_INDEX, result)
+    nodate_title_description = photo.caption
+    m = re.match(_CAPTION_PATTERN_INDEX, photo.caption)
     if not m:
-        m = re.match(_CAPTION_PATTERN, result)
+        m = re.match(_CAPTION_PATTERN, photo.caption)
+    else:
+        # Strip off trailing index
+        nodate_title_description = '%s%s%s %s' % (
+            m.group(1), m.group(2), m.group(3), m.group(4))
     if m:
-        if m.group(2) == '00' and m.group(3) == '00':
-            result = '%s %s' % (m.group(1), m.group(4))
-        elif m.group(3) == '00':
-            result = '%s/%s %s' % (m.group(1), m.group(2), m.group(4))
-        else:
-            result = '%s/%s/%s %s' % (
-                m.group(1), m.group(2), m.group(3), m.group(4))
+        # Strip of leading date
+        nodate_title_description = nodate_title_description[8:].strip()
+    title_description = photo.caption
     if photo.comment:
-        result += ': ' + photo.comment
+        title_description += ': ' + photo.comment
+        nodate_title_description += ': ' + photo.comment
+        
+    if photo.date:
+        year = str(photo.date.year)
+        month = str(photo.date.month).zfill(2)
+        day = str(photo.date.day).zfill(2)
+    else:
+        year = ''
+        month = ''
+        day = ''
 
-    return caption_template.format(caption=photo.caption,
-                                   description=photo.comment,
-                                   dated_caption_description=result)
+    return caption_template.format(
+        title=photo.caption,
+        description=photo.comment,
+        title_description=title_description,
+        nodate_title_description=nodate_title_description,
+        yyyy=year,
+        mm=month,
+        dd=day)
 
+_YEAR_PATTERN_INDEX = re.compile(r'([0-9][0-9][0-9][0-9]) (.*)')
+
+def format_album_name(album, folder_template):
+    """Formats a folder name using a template.
+
+       Args:
+         album - an IPhotoContainer.
+         folder_template - a format string.
+    """
+    name = album.name
+    if not album.name:
+        name = ''
+    nodate_name = name
+    m = re.match(_YEAR_PATTERN_INDEX, name)
+    if m:
+        nodate_name = m.group(2)
     
+
+    if album.date:
+        year = str(album.date.year)
+        month = str(album.date.month).zfill(2)
+        day = str(album.date.day).zfill(2)
+    else:
+        year = ''
+        month = ''
+        day = ''
+
+    folderhint = album.getfolderhint()
+    if not folderhint:
+        folderhint = ''
+    
+    return folder_template.format(
+        album=name,
+        name=name,
+        nodate_album=nodate_name,
+        hint=folderhint,
+        yyyy=year,
+        mm=month,
+        dd=day)
+    
+def format_photo_name(photo, album_name, index, padded_index,
+                      name_template):
+    """Formats an image name based on a template."""
+    # default image caption filenames have the file extension on them
+    # already, so remove it or the export filename will look like
+    # "IMG 0087 JPG.jpg"
+    orig_basename = re.sub(
+        re.compile(r'\.(jpeg|jpg|mpg|mpeg|mov|png|tif|tiff)$',
+                   re.IGNORECASE), '', photo.caption)
+    if photo.date:
+        year = str(photo.date.year)
+        month = str(photo.date.month).zfill(2)
+        day = str(photo.date.day).zfill(2)
+    else:
+        year = ''
+        month = ''
+        day = ''
+    nodate_album_name = album_name
+    m = re.match(_YEAR_PATTERN_INDEX, nodate_album_name)
+    if m:
+        nodate_album_name = m.group(2)
+    nodate_event_name = photo.event_name
+    m = re.match(_YEAR_PATTERN_INDEX, nodate_event_name)
+    if m:
+        nodate_event_name = m.group(2)
+
+    formatted_name = name_template.format(index=index,
+                                          index0=padded_index,
+                                          event_index=photo.event_index,
+                                          event_index0=photo.event_index0,
+                                          album=album_name,
+                                          event=photo.event_name,
+                                          nodate_album=nodate_album_name,
+                                          nodate_event=nodate_event_name,
+                                          title=orig_basename,
+                                          yyyy=year,
+                                          mm=month,
+                                          dd=day)
+    # Take out invalid characters, like '/'
+    return make_image_filename(formatted_name)
+
+def copy_or_link_file(source, target, dryrun=False, link=False, size=None,
+                      update=True):
+    """copies, links, or converts an image file."""
+    try:
+        if size:
+            mode = " (convert)"
+        elif link:
+            mode = " (link)"
+            print source # TODO
+        else:
+            mode = " (copy)"
+        if os.path.exists(target):
+            if not update:
+                _logger.info("Needs update: %s." % target)
+                print "Use the -u option to update this file."
+                return True
+            _logger.info("Updating: " + target + mode)
+            if not dryrun:
+                os.remove(target)
+        else:
+            _logger.info("New file: " + target + mode)
+        if dryrun:
+            return False
+        if link:
+            _logger.debug(u'os.link(%s, %s)', source, target)
+            os.link(source, target)
+        elif size:
+            result = resize_image(source, target, size)
+            if result:
+                _logger.error(u'%s: %s' % (source, result))
+                return False
+        else:
+            _logger.debug(u'shutil.copy2(%s, %s)', source, target)
+            shutil.copy2(source, target)
+        return True
+    except (OSError, IOError) as e:
+        _logger.error(u'%s: %s' % (source, e))
+    return False

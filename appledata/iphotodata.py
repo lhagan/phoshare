@@ -62,6 +62,16 @@ def parse_face_rectangle(string_data):
         print >> sys.stderr, 'Failed to parse rectangle ' + string_data
         return [ 0.4, 0.4, 0.2, 0.2 ]
 
+def _get_aperture_master_path(preview_path):
+    """Given a path to a Aperture preview image, return the folder where the
+       Master would be stored if it is in the library."""
+    # Folder where preview image is stored.
+    folder = os.path.dirname(preview_path)
+    # Cut of the last folder in the path (see iphotodata_test.py for
+    # example).
+    folder = os.path.dirname(folder)
+    return folder.replace('/Previews/', '/Masters/', 1)
+    
 class IPhotoData(object):
     """top level iPhoto data node."""
 
@@ -190,6 +200,15 @@ class IPhotoData(object):
         for message in messages:
             print message
 
+    def load_aperture_originals(self):
+        """Attempts to locate the original image files (Masters). Only works if
+           the masters are stored in the library."""
+        if not self.aperture:
+            return
+        for image in self.images_by_id.values():
+            image.find_aperture_original()
+
+        
 
 #  public void checkComments() {
 #    TreeSet<String> images = new TreeSet<String>();
@@ -287,6 +306,9 @@ class IPhotoImage(object):
         self.albums = []  # list of albums that this image belongs to
         self.faces = []
         self.face_rectangles = []
+        self.event_name = '' # name of event (roll) that this image belongs to
+        self.event_index = '' # index within event
+        self.event_index0 = '' # index with event, left padded with 0
 
         face_list = data.get("Faces")
         if face_list:
@@ -349,12 +371,45 @@ class IPhotoImage(object):
     rotation_is_only_edit = property(_getrotationisonlyedit,
                                      doc="Rotation is only edit.")
 
+    def _search_for_file(self, folder_path, basename):
+        """Scans recursively through a folder tree and returns the path to the
+           first file it finds that starts with "basename".
+        """
+        for file_name in os.listdir(folder_path):
+            path = os.path.join(folder_path, file_name)
+            if os.path.isdir(path):
+                path = self._search_for_file(path, basename)
+                if path:
+                    return path
+            elif file_name.startswith(basename):
+                return path
+        return None
+        
+    def find_aperture_original(self):
+        """Attempts to locate the Aperture Master image. Works only for .jpg
+           masters that are stored in the Aperture library. Saves the result as
+           originalpath."""
+        master_path = _get_aperture_master_path(self.image_path)
+        if not os.path.exists(master_path):
+            return
+        basename = sysutils.getfilebasename(self.image_path)
+        file_name = os.path.join(master_path, basename + '.jpg')
+        if os.path.exists(file_name):
+            self.originalpath = file_name
+            return
+        path = self._search_for_file(master_path, basename + '.')
+        if path:
+            self.originalpath = path
+            return
+        print "No master for " + self.image_path
+
 
 class IPhotoContainer(object):
     """Base class for IPhotoAlbum and IPhotoRoll."""
 
     def __init__(self, name, albumtype, data, images):
         self.name = name
+        self.date = None
         # The iPhoto master album has no album type.
         if not albumtype and name == 'Photos':
             albumtype = 'Master'
@@ -372,6 +427,10 @@ class IPhotoContainer(object):
             albumtype = 'Library'
         elif albumtype == '6':
             albumtype = 'Folder'
+        elif albumtype == '18':
+            albumtype = 'OnlineAccount'
+        elif albumtype == '20':
+            albumtype = 'Published'
         elif not albumtype:
             print 'No album type for %s.' % name
         elif albumtype.isdigit():
@@ -436,6 +495,16 @@ class IPhotoContainer(object):
         """adds an album to this container."""
         self.albums.append(album)
 
+    def find_oldest_date(self):
+        # For containers that don't have a date, we calculate it from the image
+        # dates.
+        if self.date:
+            return
+        self.date = datetime.datetime.now()
+        for image in self.images:
+            if image.date and image.date < self.date:
+                self.date = image.date
+
     def tostring(self):
         """Gets a string that describes this album or event."""
         return "%s (%s)" % (self.name, self.albumtype)
@@ -453,10 +522,18 @@ class IPhotoRoll(IPhotoContainer):
         self.albumid = data.get("RollID")
         if not self.albumid:
             self.albumid = data.get("AlbumId")
-
-    def _getdate(self):
-        return applexml.getappletime(self.data.get("RollDateAsTimerInterval"))
-    date = property(_getdate, doc="Date of event.")
+        self.date = applexml.getappletime(self.data.get(
+            "RollDateAsTimerInterval"))
+        if not self.date:
+            self.date = applexml.getappletime(self.data.get(
+                'ProjectEarliestDateAsTimerInterval'))
+        i = 1
+        index_digits = len(str(len(self.images)))
+        for image in self.images:
+            image.event_name = self.name
+            image.event_index = i
+            image.event_index0 = str(i).zfill(index_digits)
+            i += 1
 
 
 class IPhotoAlbum(IPhotoContainer):
@@ -480,13 +557,8 @@ class IPhotoAlbum(IPhotoContainer):
                     self.name, parent_id)
         if self.parent:
             self.parent.addalbum(self)
+        self.find_oldest_date()
 
-        # Albums have no date attribute, so we calculate it from the image
-        # dates.
-        self.date = datetime.datetime.now()
-        for image in self.images:
-            if image.date and image.date < self.date:
-                self.date = image.date
 
 class IPhotoFace(object):
     """An IPhotoContainer compatible class for a face."""
@@ -498,6 +570,7 @@ class IPhotoFace(object):
         self.images = []
         self.albums = []
         self.comment = ""
+        self.date = datetime.datetime.now()
 
     def _getsize(self):
         return len(self.images)
@@ -518,6 +591,9 @@ class IPhotoFace(object):
     def addimage(self, image):
         """Adds an image to this container."""
         self.images.append(image)
+        # Set the face date based on the earlierst image.
+        if image.date and image.date < self.date:
+            self.date = image.date
 
     def tostring(self):
         """Gets a string that describes this album or event."""

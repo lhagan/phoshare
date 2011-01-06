@@ -22,6 +22,10 @@ import phoshare.phoshare_main
 
 def main():
     """Main routine for Phoshare. Decides on UI vs. non-UI version."""
+    # Remove the funny -psn_xxx_xxx argument (from py2app)
+    if len(sys.argv) > 1 and sys.argv[1][:4] == '-psn':
+        del sys.argv[1]
+
     if len(sys.argv) <= 1:
         phoshare.phoshare_ui.main()
     else:

@@ -210,12 +210,12 @@ class PicasaFile(object):
     def __init__(self, photo, album_name, base_name, options):
         """Creates a new PicasaFile object."""
         self.photo = photo
+        self.title = base_name
         if options.size:
             extension = "jpg"
         else:
             extension = su.getfileextension(photo.image_path)
-        self.export_file = os.path.join(
-            album_name, base_name + '.' + extension)
+        self.export_file = os.path.join(album_name, base_name + '.' + extension)
         self.picasa_photo = None
 
     def generate(self, client, album_id, options):
@@ -253,12 +253,12 @@ class PicasaFile(object):
         # Now check if any of the meta data needs to be updated.
         needs_update = False
         picasa_title = su.unicode_string(picasa_photo.title.text)
-        if self.photo.caption != picasa_title:
+        if self.title != picasa_title:
             print ('Updating meta data for %s because it has Caption "%s" '
                 'instead of "%s".') % (su.fsenc(self.export_file),
                                        su.fsenc(picasa_title),
-                                       su.fsenc(self.photo.caption))
-            picasa_photo.title.text = self.photo.caption
+                                       su.fsenc(self.title))
+            picasa_photo.title.text = self.title
             needs_update = True
 
         # Combine title and description because PicasaWeb does not show the
@@ -355,7 +355,7 @@ class PicasaFile(object):
         album_url = '%s/%s' % (_ALBUM_URL, album_id)
     
         new_photo = gdata.photos.PhotoEntry()
-        new_photo.title = atom.Title(text=self.photo.caption)
+        new_photo.title = atom.Title(text=self.title)
         comment = imageutils.get_photo_caption(self.photo,
                                                options.captiontemplate)
         if comment:
@@ -397,21 +397,35 @@ class PicasaAlbum(object):
 
     def add_iphoto_images(self, images, options):
         """Works through an image folder tree, and builds data for exporting."""
+        entries = 0
+        template = options.nametemplate
+
         if images is not None:
+            entry_digits = len(str(len(images)))
             for image in images:
                 if image.ismovie() and not options.movies:
                     continue
                 if _NOUPLOAD_KEYWORD in image.keywords:
                     continue
-                base_name = image.caption
-                image_basename = self.make_album_basename(base_name)
+                entries += 1
+                image_basename = self.make_album_basename(
+                    image,
+                    entries,
+                    str(entries).zfill(entry_digits),
+                    template)
                 picture_file = PicasaFile(image, self.name,
                                           image_basename, options)
                 self.files[image_basename] = picture_file
         return len(self.files)
 
-    def make_album_basename(self, base_name):
-        """creates unique image name."""
+    def make_album_basename(self, photo, index, padded_index,
+                            name_template):
+        """creates unique file name."""
+        base_name = imageutils.format_photo_name(photo,
+                                                 self.iphoto_container.name,
+                                                 index,
+                                                 padded_index,
+                                                 name_template)
         index = 0
         while True:
             album_basename = base_name
@@ -420,7 +434,7 @@ class PicasaAlbum(object):
             if self.files.get(album_basename) is None:
                 return album_basename
             index += 1
-        return base_name  # Should never reach here.
+        return base_name
     
     def load_album(self, client, online_albums, options):
         """Walks the album directory tree, and scans it for existing files."""
@@ -462,7 +476,7 @@ class PicasaAlbum(object):
             self.online_album.timestamp.text = timestamp
             changed = True
 
-        if changed:
+        if changed and not options.dryrun:
             client.throttle()
             try:
                 self.online_album = client.gd_client.Put(
