@@ -733,7 +733,6 @@ Metadata options will be disabled if exiftool is not available.""")
             self.captiontemplate = u'{description}'
             self.foldertemplate = u'{name}'
             self.nametemplate = u'{title}'
-            self.aperture = False # TODO
             self.size = ''  # TODO
             self.picasa = False  # TODO
             self.movies = True  # TODO
@@ -964,13 +963,16 @@ Metadata options will be disabled if exiftool is not available.""")
             options.facealbum_prefix = self.face_albums_text.get()
             if options.facealbum_prefix:
                 args.append('--facealbum_prefix')
+            options.verbose = self.verbose_var.get()
+            if options.verbose:
+                args.append('--verbose')
 
             exclude = None # TODO
 
             options.save()
             print " ".join(args)
 
-            self.logging_handler.setLevel(logging.DEBUG if self.verbose_var.get() else logging.INFO)
+            self.logging_handler.setLevel(logging.DEBUG if options.verbose else logging.INFO)
             self.active_library = phoshare_main.ExportLibrary(export_folder)
             phoshare_main.export_iphoto(self.active_library, data, exclude,
                                         options)

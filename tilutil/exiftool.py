@@ -30,7 +30,7 @@ from xml import parsers
 import tilutil.systemutils as su
 import tilutil.imageutils as imageutils
 
-EXIFTOOL = "exiftool"
+EXIFTOOL = u"exiftool"
 
 def check_exif_tool(msgstream=sys.stderr):
     """Tests if a compatible version of exiftool is available."""
@@ -69,83 +69,104 @@ def _get_xml_nodevalues(xml_data, tag, data):
 def get_iptc_data(image_file):
     """get caption, keywords, datetime, rating, and GPS info all in one 
        operation."""
-    output = su.execandcombine(
-        (EXIFTOOL, "-X", "-m", "-q", "-q", '-c', '%.6f', "-Keywords", 
-         "-Caption-Abstract", "-DateTimeOriginal", "-Rating", "-GPSLatitude",
-         "-Subject", "-GPSLongitude", "-RegionRectangle",
-         "-RegionPersonDisplayName", image_file))
-  
-    keywords = []
-    caption = None
-    date_time_original = None
-    rating = 0
-    gps = None
-    region_names = []
-    region_rectangles = []
-    if output:
-        try:
+    iptc_data_list = get_iptc_data_list([image_file])
+    iptc_data = None
+    for data in iptc_data_list.values():
+        # Only one file in list
+        iptc_data = data
+        break
+    if not iptc_data:
+        su.pout(u"no iptc data for %s" % (image_file))
+        return ([], '', None, -1, None, [], [])
+    return (iptc_data.keywords, iptc_data.caption, iptc_data.date_time_original, iptc_data.rating,
+            iptc_data.gps, iptc_data.region_rectangles, iptc_data.region_names)
+
+class IptcData(object):
+
+    def __init__(self):
+        self.keywords = None
+        self.caption = None
+        self.date_time_original = None
+        self.rating = None
+        self.gps = None
+        self.region_names = None
+        self.region_rectangles = None
+
+def get_iptc_data_list(image_files):
+    """get caption, keywords, datetime, rating, and GPS info from a list of files
+       all in one operation."""
+    args = [EXIFTOOL, "-X", "-m", "-q", "-q", '-c', '%.6f', "-Keywords", 
+            "-Caption-Abstract", "-DateTimeOriginal", "-Rating", "-GPSLatitude",
+            "-Subject", "-GPSLongitude", "-RegionRectangle",
+            "-RegionPersonDisplayName"]
+    args.extend(image_files)
+    results = {}
+    output = su.execandcombine(args)
+    if not output:
+        return results
+
+    try:
+        xml_data = minidom.parseString(output)
+        for xml_desc in xml_data.getElementsByTagName('rdf:Description'):
+            iptc_data = IptcData()
+            iptc_data.rating = 0
+            iptc_data.region_names = []
+            iptc_data.region_rectangles = []
             gps_latitude = None
             gps_longitude = None
-
-            xml_data = minidom.parseString(output)
-
-            for xml_desc in xml_data.getElementsByTagName('rdf:Description'):
-                _get_xml_nodevalues(xml_desc, 'IPTC:Keywords', keywords)
-                # Keywords can also be stored as Subject in the XMP directory
-                _get_xml_nodevalues(xml_desc, 'XMP:Subject', keywords)
-                for xml_caption in xml_data.getElementsByTagName(
-                    'IPTC:Caption-Abstract'):
-                    caption = xml_caption.firstChild.nodeValue
-                for xml_element in xml_data.getElementsByTagName(
-                    'ExifIFD:DateTimeOriginal'):
-                    if not xml_element.firstChild:
-                        continue
-                    try:
-                        date_time_original = time.strptime(
-                            xml_element.firstChild.nodeValue,
-                            '%Y:%m:%d %H:%M:%S')
-                        date_time_original = datetime.datetime(
-                            date_time_original.tm_year,
-                            date_time_original.tm_mon,
-                            date_time_original.tm_mday,
-                            date_time_original.tm_hour,
-                            date_time_original.tm_min,
-                            date_time_original.tm_sec)
-                    except ValueError, _ve:
-                        su.perr('Exiftool returned an invalid '
-                                'date %s for %s - ignoring.' % (
-                            xml_element.firstChild.nodeValue,
-                            image_file))
-                for xml_element in xml_data.getElementsByTagName(
-                    'XMP-xmp:Rating'):
-                    rating = int(xml_element.firstChild.nodeValue)
-                for xml_element in xml_data.getElementsByTagName(
-                    'Composite:GPSLatitude'):
+            image_file = xml_desc.getAttribute("rdf:about")
+            results[image_file] = iptc_data
+            
+            iptc_data.keywords = []
+            _get_xml_nodevalues(xml_desc, 'IPTC:Keywords', iptc_data.keywords)
+            # Keywords can also be stored as Subject in the XMP directory
+            _get_xml_nodevalues(xml_desc, 'XMP:Subject', iptc_data.keywords)
+            for xml_caption in xml_data.getElementsByTagName('IPTC:Caption-Abstract'):
+                if xml_caption.firstChild:
+                    iptc_data.caption = xml_caption.firstChild.nodeValue
+            for xml_element in xml_data.getElementsByTagName('ExifIFD:DateTimeOriginal'):
+                if not xml_element.firstChild:
+                    continue
+                try:
+                    date_time_original = time.strptime(
+                        xml_element.firstChild.nodeValue, '%Y:%m:%d %H:%M:%S')
+                    iptc_data.date_time_original = datetime.datetime(
+                        date_time_original.tm_year,
+                        date_time_original.tm_mon,
+                        date_time_original.tm_mday,
+                        date_time_original.tm_hour,
+                        date_time_original.tm_min,
+                        date_time_original.tm_sec)
+                except ValueError, _ve:
+                    su.perr('Exiftool returned an invalid date %s for %s - ignoring.' % (
+                        xml_element.firstChild.nodeValue, image_file))
+            for xml_element in xml_data.getElementsByTagName('XMP-xmp:Rating'):
+                if xml_element.firstChild:
+                    iptc_data.rating = int(xml_element.firstChild.nodeValue)
+            for xml_element in xml_data.getElementsByTagName('Composite:GPSLatitude'):
+                if xml_element.firstChild:
                     gps_latitude = xml_element.firstChild.nodeValue
-                for xml_element in xml_data.getElementsByTagName(
-                    'Composite:GPSLongitude'):
+            for xml_element in xml_data.getElementsByTagName('Composite:GPSLongitude'):
+                if xml_element.firstChild:
                     gps_longitude = xml_element.firstChild.nodeValue
-                string_rectangles = []
-                _get_xml_nodevalues(xml_desc, 'XMP-MP:RegionRectangle', 
-                                    string_rectangles)
-                for string_rectangle in string_rectangles:
-                    rectangle = []
-                    for c in string_rectangle.split(','):
-                        rectangle.append(float(c))
-                    region_rectangles.append(rectangle)
-                _get_xml_nodevalues(xml_desc, 'XMP-MP:RegionPersonDisplayName', 
-                                    region_names)
+            string_rectangles = []
+            _get_xml_nodevalues(xml_desc, 'XMP-MP:RegionRectangle', string_rectangles)
+            for string_rectangle in string_rectangles:
+                rectangle = []
+                for c in string_rectangle.split(','):
+                    rectangle.append(float(c))
+                iptc_data.region_rectangles.append(rectangle)
+            _get_xml_nodevalues(xml_desc, 'XMP-MP:RegionPersonDisplayName', 
+                                iptc_data.region_names)
 
-            xml_data.unlink()
-            if gps_latitude and gps_longitude:
-                gps = imageutils.GpsLocation().from_composite(gps_latitude, 
-                                                              gps_longitude)
-        except parsers.expat.ExpatError, ex:
-            su.perr('Could not parse exiftool output %s: %s' % (
-                output, ex))
+        xml_data.unlink()
+        if gps_latitude and gps_longitude:
+            iptc_data.gps = imageutils.GpsLocation().from_composite(gps_latitude, 
+                                                                    gps_longitude)
+    except parsers.expat.ExpatError, ex:
+        su.perr('Could not parse exiftool output %s: %s' % (output, ex))
 
-    return (keywords, caption, date_time_original, rating, gps,
-            region_rectangles, region_names)
+    return results
 
 
 def update_iptcdata(filepath, new_caption, new_keywords, new_datetime,

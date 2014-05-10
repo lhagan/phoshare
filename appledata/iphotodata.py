@@ -62,23 +62,12 @@ def parse_face_rectangle(string_data):
         print >> sys.stderr, 'Failed to parse rectangle ' + string_data
         return [ 0.4, 0.4, 0.2, 0.2 ]
 
-def _get_aperture_master_path(preview_path):
-    """Given a path to a Aperture preview image, return the folder where the
-       Master would be stored if it is in the library."""
-    # Folder where preview image is stored.
-    folder = os.path.dirname(preview_path)
-    # Cut of the last folder in the path (see iphotodata_test.py for
-    # example).
-    folder = os.path.dirname(folder)
-    return folder.replace('/Previews/', '/Masters/', 1)
-    
 class IPhotoData(object):
     """top level iPhoto data node."""
 
-    def __init__(self, xml_data, is_aperture):
+    def __init__(self, xml_data):
         """# call with results of readAppleXML."""
         self.data = xml_data
-        self.aperture = is_aperture
 
         self.albums = {}
         self.face_albums = None
@@ -200,15 +189,6 @@ class IPhotoData(object):
         for message in messages:
             print message
 
-    def load_aperture_originals(self):
-        """Attempts to locate the original image files (Masters). Only works if
-           the masters are stored in the library."""
-        if not self.aperture:
-            return
-        for image in self.images_by_id.values():
-            image.find_aperture_original()
-
-        
 
 #  public void checkComments() {
 #    TreeSet<String> images = new TreeSet<String>();
@@ -385,24 +365,6 @@ class IPhotoImage(object):
                 return path
         return None
         
-    def find_aperture_original(self):
-        """Attempts to locate the Aperture Master image. Works only for .jpg
-           masters that are stored in the Aperture library. Saves the result as
-           originalpath."""
-        master_path = _get_aperture_master_path(self.image_path)
-        if not os.path.exists(master_path):
-            return
-        basename = sysutils.getfilebasename(self.image_path)
-        file_name = os.path.join(master_path, basename + '.jpg')
-        if os.path.exists(file_name):
-            self.originalpath = file_name
-            return
-        path = self._search_for_file(master_path, basename + '.')
-        if path:
-            self.originalpath = path
-            return
-        print "No master for " + self.image_path
-
 
 class IPhotoContainer(object):
     """Base class for IPhotoAlbum and IPhotoRoll."""
@@ -414,37 +376,6 @@ class IPhotoContainer(object):
         if not albumtype and name == 'Photos':
             albumtype = 'Master'
             
-        # Convert Aperture numeric album types to iPhoto album type names.
-        if albumtype == '1':
-            albumtype = 'Regular'
-        elif albumtype == '2':
-            albumtype = 'Smart'
-        elif albumtype == '3':
-            albumtype = 'Special'
-        elif albumtype == '4':
-            albumtype = 'Event'
-        elif albumtype == '5':
-            albumtype = 'Library'
-        elif albumtype == '6':
-            albumtype = 'Folder'
-        elif albumtype == '18':
-            albumtype = 'OnlineAccount'
-        elif albumtype == '20':
-            albumtype = 'Published'
-        elif not albumtype:
-            print 'No album type for %s.' % name
-        elif albumtype.isdigit():
-            albumid = int(albumtype)
-            if albumid > 90:
-                # 94 - Photos
-                # 95 - Flagged
-                # 96 - Library Album
-                # 97 - Projects
-                # 98 - Aperture
-                # 99 - Aperture Library
-                albumtype = name
-            else:
-                print 'Unknown album type %s for %s.' % (albumtype, name)
         self.albumtype = albumtype
         self.data = data
 
@@ -601,15 +532,12 @@ class IPhotoFace(object):
 
 
 def get_album_xmlfile(library_dir):
-    """Locates the iPhoto AlbumData.xml or Aperture ApertureData.xml file."""
+    """Locates the iPhoto AlbumData.xml file."""
     if os.path.exists(library_dir) and os.path.isdir(library_dir):
         album_xml_file = os.path.join(library_dir, "AlbumData.xml")
         if os.path.exists(album_xml_file):
             return album_xml_file
-        album_xml_file = os.path.join(library_dir, "ApertureData.xml")
-        if os.path.exists(album_xml_file):
-            return album_xml_file 
-    raise ValueError, ("%s does not appear to be a valid iPhoto or Aperture "
+    raise ValueError, ("%s does not appear to be a valid iPhoto "
                        "library location.") % (library_dir)
 
 
@@ -619,17 +547,12 @@ def get_iphoto_data(album_xml_file):
     print "Reading iPhoto database from " + library_dir + "..."
     album_xml = applexml.read_applexml_fixed(album_xml_file)
 
-    data = IPhotoData(album_xml, album_xml_file.endswith('ApertureData.xml'))
-    if data.aperture:
-        if not data.applicationVersion.startswith('3.'):
-            raise ValueError, "Aperture version %s not supported" % (
-                data.applicationVersion)
-    else:
-        if (not data.applicationVersion.startswith("9.") and
-            not data.applicationVersion.startswith("8.") and
-            not data.applicationVersion.startswith("7.") and
-            not data.applicationVersion.startswith("6.")):
-            raise ValueError, "iPhoto version %s not supported" % (
-                data.applicationVersion)
+    data = IPhotoData(album_xml)
+    if (not data.applicationVersion.startswith("9.") and
+        not data.applicationVersion.startswith("8.") and
+        not data.applicationVersion.startswith("7.") and
+        not data.applicationVersion.startswith("6.")):
+        raise ValueError, "iPhoto version %s not supported" % (
+            data.applicationVersion)
 
     return data

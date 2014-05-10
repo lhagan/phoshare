@@ -40,9 +40,13 @@ _MAX_FILE_DIFF = 5000
 
 _NOUPLOAD_KEYWORD = 'Noupload'
 
+_delete_limit = 100
+_update_limit = 1000
+
 
 def delete_online_photo(client, photo, album_name, msg, options):
     """Delete an online photo."""
+    global _delete_limit
     if msg:
         print "%s: %s" % (msg, su.fsenc(album_name) + "/" + photo.title.text)
 
@@ -53,6 +57,11 @@ def delete_online_photo(client, photo, album_name, msg, options):
     if options.dryrun:
         return True
 
+    if not _delete_limit:
+        print "Too many images to be deleted - skipping..."
+        return True
+    _delete_limit -= 1
+    
     try:
         client.throttle()
         client.gd_client.Delete(photo)
@@ -139,6 +148,7 @@ def check_media_update(client, picasa_photo, photo, export_name, options):
     Returns:
         the picasa_photo handle (after the update).
     """
+    global _update_limit
     needs_update = False
 
     picasa_updated = convert_atom_timestamp_to_epoch(picasa_photo.updated.text)
@@ -179,6 +189,10 @@ def check_media_update(client, picasa_photo, photo, export_name, options):
     print("Updating media: " + export_name)
     if options.dryrun:
         return picasa_photo
+    if not _update_limit:
+        print "Skipping update because update limit has been reached."
+        return picasa_photo
+    _update_limit -= 1
     client.throttle()
     return client.gd_client.UpdatePhotoBlob(
         picasa_photo, photo.image_path,
@@ -244,6 +258,7 @@ class PicasaFile(object):
            client - the PicasaWeb client
            album_id - the id of the album for this photo
         """
+        global _update_limit
         # check albumFile
         self.picasa_photo = check_media_update(client, self.picasa_photo,
                                                self.photo, self.export_file,
@@ -264,16 +279,19 @@ class PicasaFile(object):
         # Combine title and description because PicasaWeb does not show the
         # title anywhere.
         comment = imageutils.get_photo_caption(self.photo,
-                                               options.captiontemplate)
+                                               options.captiontemplate).strip()
+        export_keywords = self.get_export_keywords(options)
+        photo_gps = self.photo.gps
+
         online_summary = su.unicode_string(picasa_photo.summary.text)
         if not su.equalscontent(comment, online_summary):
             print ("Updating meta data for " + su.fsenc(self.export_file) + 
                   ' because it has description "' +
                   su.fsenc(online_summary) +
                   '" instead of "' + su.fsenc(comment) + '".')
-            picasa_photo.summary.text = comment.strip()
+            picasa_photo.summary.text = comment
             needs_update = True
-        
+
         if self.photo.date:
             photo_time = get_picasaweb_date(self.photo.date)
             if photo_time != picasa_photo.timestamp.text:
@@ -284,15 +302,13 @@ class PicasaFile(object):
                     self.photo.date)
                 picasa_photo.timestamp.text = photo_time
                 needs_update = True
+
         
-        export_keywords = self.get_export_keywords(options)
         picasa_keywords = []
         if (picasa_photo.media and picasa_photo.media.keywords and
             picasa_photo.media.keywords.text):
             picasa_keywords = su.unicode_string(
                 picasa_photo.media.keywords.text).split(', ')
-        else:
-            picasa_keywords = []
         if not imageutils.compare_keywords(export_keywords, picasa_keywords):
             print ("Updating meta data for " + su.fsenc(self.export_file) + 
                 " because of keywords (" +
@@ -305,17 +321,17 @@ class PicasaFile(object):
             picasa_photo.media.keywords.text = ', '.join(export_keywords)
             needs_update = True
         
-        if options.gps and self.photo.gps:
+        if options.gps and photo_gps:
             if picasa_photo.geo and picasa_photo.geo.Point:
                 picasa_location = imageutils.GpsLocation().from_gdata_point(
                     picasa_photo.geo.Point)
             else:
                 picasa_location = imageutils.GpsLocation()
-            if not picasa_location.is_same(self.photo.gps):
+            if not picasa_location.is_same(photo_gps):
                 print ("Updating meta data for " + su.fsenc(self.export_file) + 
                     " because of GPS " + picasa_location.to_string() +
-                    " vs " + self.photo.gps.to_string())
-                set_picasa_photo_pos(picasa_photo, self.photo.gps)
+                    " vs " + photo_gps.to_string())
+                set_picasa_photo_pos(picasa_photo, photo_gps)
                 needs_update = True
     
         if not needs_update:
@@ -328,6 +344,10 @@ class PicasaFile(object):
         print("Updating metadata: " + self.export_file)
         if options.dryrun:
             return
+        if not _update_limit:
+            print "Skipping update because update limit has been reached."
+            return picasa_photo
+        _update_limit -= 1
         retry = 0
         wait_time = 1.0
         while True:
@@ -356,26 +376,25 @@ class PicasaFile(object):
     
         new_photo = gdata.photos.PhotoEntry()
         new_photo.title = atom.Title(text=self.title)
+        # Combine title and description because PicasaWeb does not show the
+        # title anywhere.
         comment = imageutils.get_photo_caption(self.photo,
                                                options.captiontemplate)
+        export_keywords = self.get_export_keywords(options)
+        photo_gps = self.photo.gps
+            
         if comment:
             new_photo.summary = atom.Summary(text=comment,
                                              summary_type='text')
         new_photo.media = gdata.media.Group()
         new_photo.media.keywords = gdata.media.Keywords(
-            text=', '.join(self.get_export_keywords(options)))
-        if options.gps and self.photo.gps:
+            text=', '.join(export_keywords))
+        if options.gps and photo_gps:
             new_photo.geo = gdata.geo.Where()
             new_photo.geo.Point = gdata.geo.Point()
             new_photo.geo.Point.pos = gdata.geo.Pos(text='%.6f %.6f' % (
-                self.photo.gps.latitude, 
-                self.photo.gps.longitude))
-        # TODO(tilmansp): For some reason, this does not seem to work, and
-        # all newly inserted images need a second update cycle to fix the
-        # timestamp.
-        if self.photo.date:
-            new_photo.timestamp = gdata.photos.Timestamp(
-                text=get_picasaweb_date(self.photo.date))
+                photo_gps.latitude, 
+                photo_gps.longitude))
        
         client.throttle()
         self.picasa_photo = client.gd_client.InsertPhoto(
@@ -442,7 +461,13 @@ class PicasaAlbum(object):
         if options.verbose:
             print 'Reading online album ' + self.name
         comments = self.iphoto_container.getcommentwithouthints().strip()
-        timestamp = get_picasaweb_date(self.iphoto_container.date)
+        album_date = self.iphoto_container.date
+        if album_date:
+            # Adjust to just a date
+            album_date = datetime.datetime(album_date.year, album_date.month, album_date.day)
+            timestamp = get_picasaweb_date(album_date)
+        else:
+            timestamp = None
         self.online_album = online_albums.get(self.name)
         if not self.online_album:
             print "Creating album: " + su.fsenc(self.name)
@@ -472,7 +497,7 @@ class PicasaAlbum(object):
             print 'Updating timestamp for online album %s (%s/%s)' % (
                 su.fsenc(self.name),
                 self.online_album.timestamp.datetime(),
-                self.iphoto_container.date)
+                album_date)
             self.online_album.timestamp.text = timestamp
             changed = True
 
@@ -517,13 +542,18 @@ class PicasaAlbum(object):
     def generate_files(self, client, options):
         """Generates the files in the export location."""
         for f in sorted(self.files):
-            try:
-                self.files[f].generate(client, 
-                                       self.online_album.gphoto_id.text,
-                                       options)
-            except gdata.photos.service.GooglePhotosException, e:
-                print >> sys.stderr, 'Failed to upload %s: %s' % (
-                    self.files[f].export_file, str(e))
+            # In dryrun mode, an online_album might not exist
+            if self.online_album:
+                try:
+                    self.files[f].generate(client, 
+                                           self.online_album.gphoto_id.text,
+                                           options)
+                except gdata.photos.service.GooglePhotosException, e:
+                    print >> sys.stderr, 'Failed to upload %s: %s' % (
+                        self.files[f].export_file, str(e))
+            else:
+                su.pout(u"Skipping files for %s because online album does not exist." % (
+                    self.name))
 
 class PicasaAlbums(object):
     """Online Picasa Albums."""
@@ -604,13 +634,13 @@ class PicasaAlbums(object):
                 sub_name = "xxx"
 
             # check the album type
-            if sub_album.albumtype == "Folder":
+            if sub_album.albumtype == "Folder" or sub_album.albums:
                 sub_matched = matched
                 if include_pattern.match(sub_name):
                     sub_matched = True
                 self.process_albums(
                     sub_album.albums, album_types,
-                    folder_prefix + imageutils.make_foldername(sub_name) + "/",
+                    folder_prefix,
                     includes, excludes, options, sub_matched)
                 continue
             elif (sub_album.albumtype == "None" or

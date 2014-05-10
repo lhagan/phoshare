@@ -450,7 +450,6 @@ def copy_or_link_file(source, target, dryrun=False, link=False, size=None,
             mode = " (resize)"
         elif link:
             mode = " (link)"
-            print source # TODO
         else:
             mode = " (copy)"
         if os.path.exists(target):
