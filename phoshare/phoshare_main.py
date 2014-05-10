@@ -312,7 +312,7 @@ class ExportFile(object):
         """Tests if a file has the proper keywords and caption in the meta
            data."""
         if not su.getfileextension(export_file) in ("jpg", "tif", "tiff",
-                                                    "png", "nef", "cr2"):
+                                                    "png"):
             return False
 
         (file_keywords, file_caption, date_time_original, rating, gps,
