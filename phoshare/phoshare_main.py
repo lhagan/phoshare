@@ -434,7 +434,7 @@ class ExportDirectory(object):
         self.name = name
         self.iphoto_container = iphoto_container
         self.albumdirectory = albumdirectory
-        self.files = {}
+        self.files = {} # lower case file names -> ExportFile
 
     def add_iphoto_images(self, images, options):
         """Works through an image folder tree, and builds data for exporting."""
@@ -454,7 +454,7 @@ class ExportDirectory(object):
                     template)
                 picture_file = ExportFile(image, self.iphoto_container, self.albumdirectory,
                                           image_basename, options)
-                self.files[image_basename] = picture_file
+                self.files[image_basename.lower()] = picture_file
 
         return entries
 
@@ -471,7 +471,7 @@ class ExportDirectory(object):
             album_basename = base_name
             if index > 0:
                 album_basename += "_%d" % (index)
-            if self.files.get(album_basename) is None:
+            if self.files.get(album_basename.lower()) is None:
                 return album_basename
             index += 1
         return base_name
@@ -509,7 +509,7 @@ class ExportDirectory(object):
 
             base_name = unicodedata.normalize("NFC",
                                               su.getfilebasename(album_file))
-            master_file = self.files.get(base_name)
+            master_file = self.files.get(base_name.lower())
 
             # everything else must have a master, or will have to go
             if master_file is None or not master_file.is_part_of(album_file):
@@ -536,7 +536,7 @@ class ExportDirectory(object):
 
             base_name = unicodedata.normalize("NFC",
                                               su.getfilebasename(originalfile))
-            master_file = self.files.get(base_name)
+            master_file = self.files.get(base_name.lower())
 
             # everything else must have a master, or will have to go
             if (not master_file or
@@ -650,7 +650,7 @@ class ExportLibrary(object):
 
             folder_hint = None
             if sub_name.find('/') != -1:
-                (folder_hint, sub_name) = sub_name.split('/', 2)
+                (folder_hint, sub_name) = sub_name.split('/', 1)
             if not folder_hint and options.folderhints:
                 folder_hint = sub_album.getfolderhint()
             if not folder_hint and folderpatterns:

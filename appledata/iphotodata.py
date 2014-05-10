@@ -245,7 +245,7 @@ class IPhotoData(object):
         """
         photos = None
         for album in self.albums.values():
-            if album.name == 'Photos':
+            if album.master:
                 photos = album
                 break
         if not photos:
@@ -336,12 +336,12 @@ class IPhotoData(object):
                 face_album.addimage(image)
         return self.face_albums.values()
 
-    def has_comments(self):
-        """Returns True if at least one of the images has a comment."""
-        for image in self.images_by_id.values():
-            if image.comment:
-                return True
-        return False
+    #def has_comments(self):
+    #    """Returns True if at least one of the images has a comment."""
+    #    for image in self.images_by_id.values():
+    #        if image.comment:
+    #            return True
+    #    return False
 
     def print_summary(self):
         named_rolls = {}
@@ -583,7 +583,7 @@ class IPhotoContainer(object):
                 self.comment = container.note
 
         # The iPhoto master album has no album type.
-        if not albumtype and name == 'Photos':
+        if not albumtype and data and data.has_key("Master"):
             albumtype = 'Master'
             
         # Convert Aperture numeric album types to iPhoto album type names.
@@ -850,8 +850,8 @@ def get_iphoto_data(album_xml_file, ratings=None, verbose=False, aperture=False)
             not data.applicationVersion.startswith("6.")):
             raise ValueError, "iPhoto version %s not supported" % (
                 data.applicationVersion)
-        if not data.has_comments():
-            raise ValueError, """Did not find any comments in the iPhoto database.
-iPhoto sometimes writes the database incorrectly. Please restart iPhoto to reset.
-"""
+        #if not data.has_comments():
+        #    raise ValueError, """Did not find any comments in the iPhoto database.
+        #iPhoto sometimes writes the database incorrectly. Please restart iPhoto to reset.
+        #"""
     return data
