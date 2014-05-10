@@ -48,6 +48,8 @@ import appledata.applexml as applexml
 import tilutil.imageutils as imageutils
 import tilutil.systemutils as su
 
+# List of extensions for image formats that are considered JPEG.
+_JPG_EXTENSIONS = ('jpg', 'jpeg')
 
 def parse_face_rectangle(string_data):
     """Parse a rectangle specification into an array of coordinate data.

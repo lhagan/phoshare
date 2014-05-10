@@ -742,6 +742,7 @@ Metadata options will be disabled if exiftool is not available.""")
             self.movies = True  # TODO
             self.originals = False
             self.iptc = 0
+            self.iptc_masters = False # TODO
             self.gps = False
             self.faces = False
             self.facealbums = False

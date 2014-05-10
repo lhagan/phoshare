@@ -130,7 +130,7 @@ def make_image_filename(name):
     """Returns a valid file name by replacing problematic characters."""
     result = u''
     for c in name:
-        if c.isalnum() or c.isspace():
+        if c.isalnum() or c.isspace() or c == '_':
             result += c
         elif c == ":":
             result += '.'
@@ -321,11 +321,15 @@ _CAPTION_PATTERN = re.compile(
 
 def check_faces_in_caption(photo):
     """Checks if all faces are mentioned in the caption."""
-    caption = photo.caption
-    for face in photo.getfaces():
-        if caption and caption.find(face) != -1:
-            continue
+    comment = photo.comment
+    if photo.getfaces() and not comment:
         return False
+    for face in photo.getfaces():
+        parts = face.split(" ")
+        # Look for the full name or just the first name.
+        if (comment.find(face) == -1 and
+            (len(parts) <= 1 or comment.find(parts[0]) == -1)):
+            return False
     return True
 
 def get_faces_left_to_right(photo):
@@ -335,7 +339,7 @@ def get_faces_left_to_right(photo):
     for i in xrange(len(faces)):
         x = photo.face_rectangles[i][0]
         while names.has_key(x):
-            x += 1
+            x += 0.00001
         names[x] = faces[i]
     return [names[x] for x in sorted(names.keys())]
 

@@ -21,6 +21,7 @@ import os
 import re
 import sys
 import time
+import traceback
 import unicodedata
 
 from optparse import OptionParser
@@ -44,7 +45,7 @@ _MTIME_FUDGE = 3
 # - iPhoto help topic: About digital cameras that support RAW files
 # - Apple RAW Support listing: http://www.apple.com/aperture/specs/raw.html
 # - ExifTool supported formats (R/W only): http://www.sno.phy.queensu.ca/~phil/exiftool/#supported
-_EXIF_EXTENSIONS = ('3fr', 'arw', 'ciff', 'cr2', 'crw', 'dcr', 'erf', 'jpg', 'k25', 'kdc', 'nef',
+_EXIF_EXTENSIONS = ('3fr', 'arw', 'ciff', 'cr2', 'crw', 'dcr', 'erf', 'jpg', 'jpeg', 'k25', 'kdc',
                     'nef', 'nrw', 'orf', 'pef', 'png', 'raf', 'raw', 'rw2', 'rwl', 'sr2', 'srf',
                     'srw', 'tif', 'tiff')
 
@@ -94,9 +95,13 @@ def delete_album_file(album_file, albumdirectory, msg, options):
 def resolve_alias(path):
     """Resolves a path to point to the real file if it is a file system alias.
     """
-    fs, _, _ = FSResolveAliasFile(path, 1)
-    return su.fsdec(fs.as_pathname())
-    
+    try:
+        fs, _, _ = FSResolveAliasFile(path, 1)
+        return su.fsdec(fs.as_pathname())
+    except (OSError, MacOS.Error) as ose:
+        su.pout(u"Failed to resolve alias for %s." % (path))
+        return path
+        
 class ExportFile(object):
     """Describes an exported image."""
 
@@ -203,7 +208,7 @@ class ExportFile(object):
 
         do_iptc = (options.iptc == 1 and
                    do_original_export) or options.iptc == 2
-        if do_iptc and options.link:
+        if do_iptc and (options.link or options.iptc_masters):
             self.check_iptc_data(original_source_file, options,
                                  is_original=True, file_updated=do_original_export)
         exists = True  # True if the file exists or was updated.
@@ -223,8 +228,8 @@ class ExportFile(object):
     def generate(self, options):
         """makes sure all files exist in other album, and generates if
            necessary."""
-        source_file = self.photo.image_path
         try:
+            source_file = resolve_alias(self.photo.image_path)
             do_export = self._check_need_to_export(source_file, options)
 
             # if we use links, we update the IPTC data in the original file
@@ -252,7 +257,8 @@ class ExportFile(object):
                 not self.photo.rotation_is_only_edit):
                 self._generate_original(options)
         except (OSError, MacOS.Error) as ose:
-            su.perr(u"Failed to export %s: %s" % (source_file, ose))
+            su.perr(u"Failed to export %s to %s: %s" % (self.photo.image_path, self.export_file,
+                                                        ose))
 
     def get_photo_rectangles(self):
         """Gets a list of photo rectangles for the faces in this image."""
@@ -280,7 +286,7 @@ class ExportFile(object):
         return new_keywords
 
     def _check_person_iptc_data(self, export_file,
-                                region_rectangles, region_names, do_faces):
+                                region_rectangles, region_names, do_faces, messages):
         """Tests if the person names or regions in the export file need to be
            updated.
 
@@ -295,23 +301,20 @@ class ExportFile(object):
         combined_region_names = ','.join(region_names)
         combined_photo_faces = ','.join(photo_faces)
         if combined_region_names != combined_photo_faces:
-            su.pout('Updating IPTC for %s because of persons (%s instead of %s)'
-                    % (export_file, combined_region_names,
-                       combined_photo_faces))
+            messages.append(u'  Persons (%s instead of %s)'
+                    % (combined_region_names, combined_photo_faces))
             return (photo_rectangles, photo_faces)
 
         if len(region_rectangles) != len(photo_rectangles):
-            su.pout('Updating IPTC for %s because of number of regions '
-                    '(%d vs %d)' %
-                    (export_file, len(region_rectangles),
-                     len(photo_rectangles)))
+            messages.append(u'  Number of regions (%d vs %d)' %
+                    (len(region_rectangles), len(photo_rectangles)))
             return (photo_rectangles, photo_faces)
 
         for p in xrange(len(region_rectangles)):
             if not region_matches(region_rectangles[p], photo_rectangles[p]):
-                su.pout('Updating IPTC for %s because of region for %s '
+                messages.append(u'  Region for %s '
                         '(%s vs %s)' %
-                        (export_file, region_names[p],
+                        (region_names[p],
                          ','.join(str(c) for c in region_rectangles[p]),
                          ','.join(str(c) for c in photo_rectangles[p])))
                 return (photo_rectangles, photo_faces)
@@ -380,7 +383,7 @@ class ExportFile(object):
         # cropped).
         do_faces = options.faces and not is_original
         (new_rectangles, new_persons) = self._check_person_iptc_data(
-            export_file, region_rectangles, region_names, do_faces)
+            export_file, region_rectangles, region_names, do_faces, messages)
 
         if (new_caption != None or new_keywords != None or new_date or
             new_gps or new_rating != -1 or new_rectangles != None or new_persons != None):
@@ -459,7 +462,7 @@ class ExportDirectory(object):
         if file_list is None:
             return
 
-        for f in file_list:
+        for f in sorted(file_list):
             # we won't touch some files
             if imageutils.is_ignore(f):
                 continue
@@ -643,7 +646,7 @@ class ExportLibrary(object):
             os.makedirs(self.albumdirectory)
 
         album_directories = {}
-        for folder in self.named_folders.values():
+        for folder in sorted(self.named_folders.values()):
             if self._check_abort():
                 return
             album_directories[folder.albumdirectory] = True
@@ -799,6 +802,9 @@ def get_option_parser():
         help="""Check the IPTC data of all files. Checks for
         keywords and descriptions. Requires the program "exiftool" (see
         http://www.sno.phy.queensu.ca/~phil/exiftool/).""")
+    p.add_option("--iptc_masters",
+                 action="store_true",
+                 help="""Check and update IPTC data in the master files in the library.""")
     p.add_option(
       "-l", "--link", action="store_true",
       help="""Use links instead of copying files. Use with care, as changes made
