@@ -748,9 +748,6 @@ def export_iphoto(library, data, excludes, options):
     """Main routine for exporting iPhoto images."""
 
     print "Scanning iPhoto data for photos to export..."
-    if options.verbose:
-        data.check_photos()
-
     if options.events:
         library.process_albums(data.root_album.albums, ["Event"], u'',
                                options.events, excludes, options)
@@ -905,17 +902,6 @@ def get_option_parser():
                  help='Print build version and exit.')
     return p
 
-def check_aperture_mode(options, parser):
-    """Checks use of options with Aperture library."""
-    if options.folderhints:
-        parser.error("--folderhints not supported with Aperture - use "
-                     "Folders.")
-    #if options.iptc > 0 and options.link:
-    #    # With Aperture, we cannot modify the preview files, as they get
-    #    # regenerated automatically by Aperture.
-    #    parser.error("Cannot use --iptc and --link together with an "
-    #                 "Aperture library.")
-
 def run_phoshare(cmd_args):
     """main routine for phoshare."""
     parser = get_option_parser()
@@ -973,10 +959,8 @@ def run_phoshare(cmd_args):
         su.expand_home_folder(options.iphoto))
     data = iphotodata.get_iphoto_data(album_xml_file, ratings=options.ratings,
                                        verbose=options.verbose, aperture=options.aperture)
-    if data.aperture:
-        check_aperture_mode(options, parser)
-        if options.originals and options.export:
-            data.load_aperture_originals()
+    if options.originals and options.export:
+        data.load_aperture_originals()
         
     options.aperture = data.aperture and not data.aperture_data
     options.foldertemplate = unicode(options.foldertemplate)

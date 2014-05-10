@@ -190,7 +190,7 @@ class ExportApp(Frame):
     def __aboutHandler(self):
         HelpDialog(self, """%s %s
 
-  Copyright 2010 Google Inc.
+  Copyright 2012 Google Inc.
 
 http://code.google.com/p/phoshare""" % (phoshare_version.PHOSHARE_VERSION,
 	phoshare_version.PHOSHARE_BUILD),
@@ -987,6 +987,8 @@ Metadata options will be disabled if exiftool is not available.""")
             print " ".join(args)
 
             self.logging_handler.setLevel(logging.DEBUG if options.verbose else logging.INFO)
+	    if options.originals and options.export:
+		data.load_aperture_originals()
             self.active_library = phoshare_main.ExportLibrary(export_folder)
             phoshare_main.export_iphoto(self.active_library, data, exclude,
                                         options)

@@ -145,19 +145,20 @@ class IPhotoData(object):
                                 self.root_album, aperture_data)
             self.albums[album.albumid] = album
 
-        roll_data = self.data2.get("List of Rolls")
         self._rolls = {}
-        if roll_data:
-            for roll in roll_data:
-                roll = IPhotoRoll(roll, self.images_by_id, ratings, aperture_data)
-                other_roll = self._rolls.get(roll.albumid)
-                if other_roll:
-                    # iPhoto 9.1.2 issue: it splits rolls into many small rolls, each with a few
-                    # images. We'll merge the images back together into a single roll.
-                    other_roll.merge(roll)
-                else:
-                    self._rolls[roll.albumid] = roll
-                    self.root_album.addalbum(roll)
+	if not self.aperture:
+            roll_data = self.data2.get("List of Rolls")
+            if roll_data:
+                for roll in roll_data:
+                    roll = IPhotoRoll(roll, self.images_by_id, ratings, aperture_data)
+                    other_roll = self._rolls.get(roll.albumid)
+                    if other_roll:
+                        # iPhoto 9.1.2 issue: it splits rolls into many small rolls, each with a few
+                        # images. We'll merge the images back together into a single roll.
+                        other_roll.merge(roll)
+                    else:
+                        self._rolls[roll.albumid] = roll
+                        self.root_album.addalbum(roll)
 
         self.images_by_base_name = None
         self.images_by_file_name = None
@@ -274,7 +275,7 @@ class IPhotoData(object):
            the masters are stored in the library."""
         if not self.aperture or self.aperture_data:
             return
-        su.pout('Scanning for Aperture Originals...')
+        su.pout('Scanning for Originals...')
         for image in self.images_by_id.values():
             image.find_aperture_original()
 
@@ -570,6 +571,8 @@ class IPhotoContainer(object):
                 self._date = applexml.getappletime(data.get("RollDateAsTimerInterval"))
             if data.get("uuid"):
                 self.uuid = data.get("uuid")
+                if self.uuid == 'lastImportAlbum':
+	            albumtype = "Special Roll"
             if 'Comments' in data:
                 self.comment = data.get("Comments")
 
@@ -739,7 +742,7 @@ class IPhotoAlbum(IPhotoContainer):
 
     def __init__(self, data, images, ratings, album_map, root_album, aperture_data):
         IPhotoContainer.__init__(self, data.get("AlbumName"),
-                                 data.get("Album Type"),
+                                 data.get("Album Type") if data.has_key("Album Type") else "Regular",
                                  data, images, ratings, aperture_data)
         self.albumid = data.get("AlbumId")
         if data.has_key("Master"):
@@ -828,30 +831,26 @@ def get_iphoto_data(album_xml_file, ratings=None, verbose=False, aperture=False)
             aperture_data = None
     else:
         aperture_data = None
-        # Recent iPhoto versions write event and album data into
-        # iLifeShared/AlbumData2.xml.
-        album_xml_file2 = os.path.join(os.path.split(album_xml_file)[0],
-                                       "iLifeShared", "AlbumData2.xml")
-        if os.path.exists(album_xml_file2):
-            if verbose:
-                su.pout("Reading event and album data from %s..." % (album_xml_file2))
-            album_xml2 = applexml.read_applexml(album_xml_file2)
+    #    # Recent iPhoto versions write event and album data into
+    #    # iLifeShared/AlbumData2.xml.
+    #    album_xml_file2 = os.path.join(os.path.split(album_xml_file)[0],
+    #                                   "iLifeShared", "AlbumData2.xml")
+    #    if os.path.exists(album_xml_file2):
+    #        if verbose:
+    #            su.pout("Reading event and album data from %s..." % (album_xml_file2))
+    #        album_xml2 = applexml.read_applexml(album_xml_file2)
+    
+    application_version = album_xml.get("Application Version")
         
+    if (application_version.startswith('3.')
+        or application_version.startswith('9.')):
+	is_aperture = True
     data = IPhotoData(album_xml, album_xml2, ratings, is_aperture, aperture_data)
-    if is_aperture:
-        if (not data.applicationVersion.startswith('3.')
-            and not data.applicationVersion.startswith('9.')):
-            raise ValueError, "Aperture version %s not supported" % (
+    if (not data.applicationVersion.startswith("9.") and
+        not data.applicationVersion.startswith("8.") and
+        not data.applicationVersion.startswith("7.") and
+        not data.applicationVersion.startswith("6.") and
+        not data.applicationVersion.startswith("3.")):
+            raise ValueError, "iPhoto/Aperture version %s not supported" % (
                 data.applicationVersion)
-    else:
-        if (not data.applicationVersion.startswith("9.") and
-            not data.applicationVersion.startswith("8.") and
-            not data.applicationVersion.startswith("7.") and
-            not data.applicationVersion.startswith("6.")):
-            raise ValueError, "iPhoto version %s not supported" % (
-                data.applicationVersion)
-        #if not data.has_comments():
-        #    raise ValueError, """Did not find any comments in the iPhoto database.
-        #iPhoto sometimes writes the database incorrectly. Please restart iPhoto to reset.
-        #"""
     return data
