@@ -30,6 +30,9 @@ class ImageUtilsTest(unittest.TestCase):
             self.event_index = None
             self.event_index0 = None
 
+        def getfaces(self):
+            return []
+
     class TestAlbum(object):
 
         def __init__(self, name, date):

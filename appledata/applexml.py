@@ -14,23 +14,22 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
    
-import datetime
+import calendar
 import unicodedata
+from datetime import datetime
 from xml import sax
 
 import tilutil.systemutils as su
 
-
-#APPLE_BASE = time.mktime((2001, 1, 1, 0, 0, 0, 0, 0, -1))
-APPLE_BASE = 978307200 # 2001/1/1
+APPLE_BASE = calendar.timegm((2001, 1, 1, 0, 0, 0, 0, 0, -1))
 
 def getappletime(value):
     '''Converts a numeric Apple time stamp into a date and time'''
     try:
-        return datetime.datetime.fromtimestamp(APPLE_BASE + float(value))
+        return datetime.fromtimestamp(APPLE_BASE + float(value))
     except ValueError, _e:
         # bad time stamp in database, default to "now"
-        return datetime.datetime.now()
+        return datetime.now()
 
 class AppleXMLResolver(sax.handler.EntityResolver): #IGNORE:W0232
     '''Helper to deal with XML entity resolving'''

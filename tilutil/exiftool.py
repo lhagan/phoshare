@@ -121,10 +121,10 @@ def get_iptc_data_list(image_files):
             _get_xml_nodevalues(xml_desc, 'IPTC:Keywords', iptc_data.keywords)
             # Keywords can also be stored as Subject in the XMP directory
             _get_xml_nodevalues(xml_desc, 'XMP:Subject', iptc_data.keywords)
-            for xml_caption in xml_data.getElementsByTagName('IPTC:Caption-Abstract'):
+            for xml_caption in xml_desc.getElementsByTagName('IPTC:Caption-Abstract'):
                 if xml_caption.firstChild:
                     iptc_data.caption = xml_caption.firstChild.nodeValue
-            for xml_element in xml_data.getElementsByTagName('ExifIFD:DateTimeOriginal'):
+            for xml_element in xml_desc.getElementsByTagName('ExifIFD:DateTimeOriginal'):
                 if not xml_element.firstChild:
                     continue
                 try:
@@ -140,15 +140,18 @@ def get_iptc_data_list(image_files):
                 except ValueError, _ve:
                     su.perr('Exiftool returned an invalid date %s for %s - ignoring.' % (
                         xml_element.firstChild.nodeValue, image_file))
-            for xml_element in xml_data.getElementsByTagName('XMP-xmp:Rating'):
+            for xml_element in xml_desc.getElementsByTagName('XMP-xmp:Rating'):
                 if xml_element.firstChild:
                     iptc_data.rating = int(xml_element.firstChild.nodeValue)
-            for xml_element in xml_data.getElementsByTagName('Composite:GPSLatitude'):
+            for xml_element in xml_desc.getElementsByTagName('Composite:GPSLatitude'):
                 if xml_element.firstChild:
                     gps_latitude = xml_element.firstChild.nodeValue
-            for xml_element in xml_data.getElementsByTagName('Composite:GPSLongitude'):
+            for xml_element in xml_desc.getElementsByTagName('Composite:GPSLongitude'):
                 if xml_element.firstChild:
                     gps_longitude = xml_element.firstChild.nodeValue
+            if gps_latitude and gps_longitude:
+                iptc_data.gps = imageutils.GpsLocation().from_composite(gps_latitude, 
+                                                                        gps_longitude)
             string_rectangles = []
             _get_xml_nodevalues(xml_desc, 'XMP-MP:RegionRectangle', string_rectangles)
             for string_rectangle in string_rectangles:
@@ -160,9 +163,7 @@ def get_iptc_data_list(image_files):
                                 iptc_data.region_names)
 
         xml_data.unlink()
-        if gps_latitude and gps_longitude:
-            iptc_data.gps = imageutils.GpsLocation().from_composite(gps_latitude, 
-                                                                    gps_longitude)
+      
     except parsers.expat.ExpatError, ex:
         su.perr('Could not parse exiftool output %s: %s' % (output, ex))
 
@@ -185,7 +186,7 @@ def update_iptcdata(filepath, new_caption, new_keywords, new_datetime,
             tmpfd, tmp = tempfile.mkstemp(dir="/var/tmp")
             os.close(tmpfd)
             file1 = open(tmp, "w")
-            print >> file1, new_caption.encode("utf-8")
+            file1.write(new_caption.encode("utf-8"))
             file1.close()
             command.append('-Caption-Abstract<=%s' % (tmp))
     

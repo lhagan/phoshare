@@ -66,6 +66,44 @@ from http://www.imagemagick.org/script/index.php
         return False
     return True
 
+def should_create(options):
+    """Returns True if a create should be performed, based on options. Does not
+       check options.dryrun."""
+    if not options.max_create:
+        print 'Item not created because create limit has been reached.'
+        return False
+    if options.max_create != -1:
+        options.max_create -= 1
+    return True
+
+def should_delete(options):
+    """Returns True if a delete should be performed, based on options. Does not
+       check options.dryrun."""
+    if not options.delete:
+        if not options.dryrun:
+            print 'Invoke phoshare with the -d option to delete this item.'
+        return False
+    if not options.max_delete:
+        print 'Item not deleted because delete limit has been reached.'
+        return False
+    if options.max_delete != -1:
+        options.max_delete -= 1
+    return True
+
+def should_update(options):
+    """Returns True if an update should be performed, based on options. Does not
+       check options.dryrun."""
+    if not options.update:
+        if not options.dryrun:
+            print 'Invoke phoshare with the -u option to update this item.'
+        return False
+    if not options.max_update:
+        print 'Item not updated because update limit has been reached.'
+        return False
+    if options.max_update != -1:
+        options.max_update -= 1
+    return True
+
 def is_ignore(file_name):
     """returns True if the file name is in a list of names to ignore."""
     if file_name.startswith("."):
@@ -208,7 +246,7 @@ class GpsLocation(object):
     """
     # How much rounding "error" do we allow for two GPS coordinates
     # to be considered identical.
-    _MIN_GPS_DIFF = 0.0000007
+    _MIN_GPS_DIFF = 0.0001
 
     def __init__(self, latitude=0.0, longitude=0.0):
         """Constructs a GpsLocation object."""
@@ -281,6 +319,26 @@ _CAPTION_PATTERN_INDEX = re.compile(
 _CAPTION_PATTERN = re.compile(
     r'([0-9][0-9][0-9][0-9])([0-9][0-9])([0-9][0-9]) (.*)')
 
+def check_faces_in_caption(photo):
+    """Checks if all faces are mentioned in the caption."""
+    caption = photo.caption
+    for face in photo.getfaces():
+        if caption and caption.find(face) != -1:
+            continue
+        return False
+    return True
+
+def get_faces_left_to_right(photo):
+    """Return a list of face names, sorted by appearance in the image from left to right."""
+    faces = photo.getfaces()
+    names = {}
+    for i in xrange(len(faces)):
+        x = photo.face_rectangles[i][0]
+        while names.has_key(x):
+            x += 1
+        names[x] = faces[i]
+    return [names[x] for x in sorted(names.keys())]
+
 def get_photo_caption(photo, caption_template):
     """Gets the caption for a IPhotoImage photo, using a template. Supports:
        {caption} - the iPhoto caption (title).
@@ -317,6 +375,18 @@ def get_photo_caption(photo, caption_template):
         year = ''
         month = ''
         day = ''
+
+    names = get_faces_left_to_right(photo)
+    if names:
+        face_list = '(%s)' % (', '.join(names))
+    else:
+        face_list = ''
+
+    if check_faces_in_caption(photo):
+        opt_face_list = ''
+    else:
+        opt_face_list = '(%s)' % (', '.join(get_faces_left_to_right(photo)))
+    
     try:
         return caption_template.format(
             title=photo.caption,
@@ -325,7 +395,9 @@ def get_photo_caption(photo, caption_template):
             nodate_title_description=nodate_title_description,
             yyyy=year,
             mm=month,
-            dd=day)
+            dd=day,
+            face_list=face_list,
+            opt_face_list=opt_face_list).strip()
     except KeyError, e:
         su.pout(u'Unrecognized field in caption template: %s. Use one of: title, description, '
                 'title_description, yyyy, mm, dd.' % (str(e)))
@@ -443,8 +515,11 @@ def format_photo_name(photo, album_name, index, padded_index,
     return make_image_filename(formatted_name)
 
 def copy_or_link_file(source, target, dryrun=False, link=False, size=None,
-                      update=True):
-    """copies, links, or converts an image file."""
+                      options=None):
+    """copies, links, or converts an image file.
+
+    Returns: True if the file exists.
+    """
     try:
         if size:
             mode = " (resize)"
@@ -453,15 +528,15 @@ def copy_or_link_file(source, target, dryrun=False, link=False, size=None,
         else:
             mode = " (copy)"
         if os.path.exists(target):
-            if not update:
-                _logger.info("Needs update: %s." % target)
-                print "Use the -u option to update this file."
+            _logger.info("Needs update: " + target + mode)
+            if options and not should_update(options):
                 return True
-            _logger.info("Updating: " + target + mode)
             if not dryrun:
                 os.remove(target)
         else:
             _logger.info("New file: " + target + mode)
+            if options and not should_create(options):
+                return False
         if dryrun:
             return False
         if link:

@@ -32,5 +32,13 @@ class IPhotoDataTest(unittest.TestCase):
         self.assertEquals([0.4, 0.4, 0.2, 0.2],
                           iphotodata.parse_face_rectangle('xxyy'))
 
+    def test_get_aperture_master_path(self):
+        self.assertEquals(iphotodata._get_aperture_master_path(
+            '/Volumes/Backup750/Aperture Library.aplibrary/Previews/'
+            '2010/11/25/20101125-003412/OG0AGTAUSb++CJcsdH74%A/'
+            '20090213 Faria Valentine - 09.jpg'),
+            '/Volumes/Backup750/Aperture Library.aplibrary/'
+            'Masters/2010/11/25/20101125-003412')
+
 if __name__ == '__main__':
     unittest.main()

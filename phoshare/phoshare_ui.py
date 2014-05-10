@@ -727,12 +727,16 @@ Metadata options will be disabled if exiftool is not available.""")
             self.ignore = []
             self.delete = False
             self.update = False
+            self.max_create = -1
+            self.max_delete = -1
+            self.max_update = -1
             self.link = False
             self.dryrun = False
             self.folderhints = False
             self.captiontemplate = u'{description}'
             self.foldertemplate = u'{name}'
             self.nametemplate = u'{title}'
+            self.aperture = False # TODO
             self.size = ''  # TODO
             self.picasa = False  # TODO
             self.movies = True  # TODO
@@ -816,8 +820,11 @@ Metadata options will be disabled if exiftool is not available.""")
             config.set(s, 'foldertemplate', su.fsenc(self.foldertemplate))
             config.set(s, 'nametemplate', su.fsenc(self.nametemplate))
             config.set(s, 'captiontemplate', su.fsenc(self.captiontemplate))
+            config.set(s, 'max_create', self.max_create)
             config.set(s, 'delete', self.delete)
+            config.set(s, 'max_delete', self.max_delete)
             config.set(s, 'update', self.update)
+            config.set(s, 'max_udpate', self.max_update)
             config.set(s, 'link', self.link)
             config.set(s, 'dryrun', self.dryrun)
             config.set(s, 'folderhints', self.folderhints)

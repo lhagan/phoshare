@@ -15,6 +15,7 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
+import getpass
 import logging
 import os
 import re
@@ -34,7 +35,7 @@ import phoshare.phoshare_version
 
 # Maximum diff in file size to be not considered a change (to allow for
 # meta data updates for example)
-_MAX_FILE_DIFF = 35000
+_MAX_FILE_DIFF = 60000
 
 # Fudge factor for file modification times
 _MTIME_FUDGE = 3
@@ -47,11 +48,10 @@ _EXIF_EXTENSIONS = ('3fr', 'arw', 'ciff', 'cr2', 'crw', 'dcr', 'erf', 'jpg', 'k2
                     'nef', 'nrw', 'orf', 'pef', 'png', 'raf', 'raw', 'rw2', 'rwl', 'sr2', 'srf',
                     'srw', 'tif', 'tiff')
 
+# create logger
 _logger = logging.getLogger('google')
 _logger.setLevel(logging.DEBUG)
-
-# create logger
-
+  
 def region_matches(region1, region2):
     """Tests if two regions (rectangles) match."""
     if len(region1) != len(region2):
@@ -71,9 +71,7 @@ def delete_album_file(album_file, albumdirectory, msg, options):
     if msg:
         print "%s: %s" % (msg, su.fsenc(album_file))
 
-    if not options.delete:
-        if not options.dryrun:
-            print "Invoke phoshare with the -d option to delete this file."
+    if not imageutils.should_delete(options):
         return False
     if options.dryrun:
         return True
@@ -207,7 +205,7 @@ class ExportFile(object):
                    do_original_export) or options.iptc == 2
         if do_iptc and options.link:
             self.check_iptc_data(original_source_file, options,
-                                 is_original=True)
+                                 is_original=True, file_updated=do_original_export)
         exists = True  # True if the file exists or was updated.
         if do_original_export:
             exists = imageutils.copy_or_link_file(original_source_file,
@@ -215,12 +213,12 @@ class ExportFile(object):
                                                   options.dryrun,
                                                   options.link,
                                                   self.size,
-                                                  options.update)
+                                                  options)
         else:
             _logger.debug(u'%s up to date.', self.original_export_file)
         if exists and do_iptc and not options.link:
             self.check_iptc_data(self.original_export_file, options,
-                                 is_original=True)
+                                 is_original=True, file_updated=do_original_export)
 
     def generate(self, options):
         """makes sure all files exist in other album, and generates if
@@ -232,7 +230,7 @@ class ExportFile(object):
             # if we use links, we update the IPTC data in the original file
             do_iptc = (options.iptc == 1 and do_export) or options.iptc == 2
             if do_iptc and options.link:
-                if self.check_iptc_data(source_file, options):
+                if self.check_iptc_data(source_file, options, file_updated=do_export):
                     do_export = True
 
             exists = True  # True if the file exists or was updated.
@@ -242,13 +240,13 @@ class ExportFile(object):
                                                       options.dryrun,
                                                       options.link,
                                                       self.size,
-                                                      options.update)
+                                                      options)
             else:
                 _logger.debug(u'%s up to date.', self.export_file)
 
             # if we copy, we update the IPTC data in the copied file
             if exists and do_iptc and not options.link:
-                self.check_iptc_data(self.export_file, options)
+                self.check_iptc_data(self.export_file, options, file_updated=do_export)
 
             if (options.originals and self.photo.originalpath and
                 not self.photo.rotation_is_only_edit):
@@ -271,7 +269,10 @@ class ExportFile(object):
 
     def get_export_keywords(self, do_face_keywords):
         """Returns the list of keywords that should be in the exported image."""
-        new_keywords = self.photo.keywords[:]
+        if not self.photo.keywords:
+            new_keywords = []
+        else:
+            new_keywords = self.photo.keywords[:]
         if do_face_keywords:
             for keyword in self.photo.getfaces():
                 if not keyword in new_keywords:
@@ -317,45 +318,53 @@ class ExportFile(object):
 
         return (None, None)
     
-    def check_iptc_data(self, export_file, options, is_original=False):
+    def check_iptc_data(self, export_file, options, is_original=False, file_updated=False):
         """Tests if a file has the proper keywords and caption in the meta
            data."""
         if not su.getfileextension(export_file) in _EXIF_EXTENSIONS:
             return False
+        messages = []
 
         (file_keywords, file_caption, date_time_original, rating, gps,
          region_rectangles, region_names) = exiftool.get_iptc_data(
             export_file)
+         
         new_caption = imageutils.get_photo_caption(self.photo,
                                                    options.captiontemplate)
         if not su.equalscontent(file_caption, new_caption):
-            su.pout('Updating IPTC for %s because it has Caption "%s" '
-                    'instead of "%s".' % (export_file, file_caption,
-                                          new_caption))
+            messages.append(u'  File caption:   %s' % (su.nn_string(file_caption).strip()))
+            messages.append(u'  iPhoto caption: %s' % (new_caption))
         else:
             new_caption = None
 
-        new_keywords = self.get_export_keywords(options.face_keywords)
-        if not imageutils.compare_keywords(new_keywords, file_keywords):
-            su.pout("Updating IPTC for %s because of keywords (%s instead "
-                    "of %s)" % (export_file, ",".join(file_keywords),
-                             ",".join(new_keywords)))
-        else:
-            new_keywords = None
-
+        new_keywords = None
         new_date = None
-        if self.photo.date and date_time_original != self.photo.date:
-            su.pout("Updating IPTC for %s because of date (%s instead of "
-                    "%s)" %
-                    (export_file, date_time_original, self.photo.date))
-            new_date = self.photo.date
-
         new_rating = -1
-        if self.photo.rating != None and rating != self.photo.rating:
-            su.pout("Updating IPTC for %s because of rating (%d instead of "
-                    "%d)" % (export_file, rating, self.photo.rating))
-            new_rating = self.photo.rating
+        if not options.aperture:
+            new_keywords = self.get_export_keywords(options.face_keywords)
+            if not imageutils.compare_keywords(new_keywords, file_keywords):
+                messages.append(u'  File keywords:   %s' % (u','.join(file_keywords)))
+                messages.append(u'  iPhoto keywords: %s' % (u','.join(new_keywords)))
+            else:
+                new_keywords = None
 
+            if self.photo.date and date_time_original != self.photo.date:
+                messages.append(u'  File date:   %s' % (date_time_original))
+                messages.append(u'  iPhoto date: %s' % (self.photo.date))
+                new_date = self.photo.date
+ 
+            if self.photo.rating != None and rating != self.photo.rating:
+                messages.append(u'  File rating:   %d' % (rating))
+                messages.append(u'  iPhoto rating: %d' % (self.photo.rating))
+                new_rating = self.photo.rating
+        else:
+            if options.face_keywords:
+                merged_keywords = file_keywords[:]
+                for keyword in self.photo.getfaces():
+                    if not keyword in merged_keywords:
+                        merged_keywords.append(keyword)
+                        new_keywords = merged_keywords
+ 
         new_gps = None
         if options.gps and self.photo.gps:
             if (not gps or not self.photo.gps.is_same(gps)):
@@ -363,9 +372,8 @@ class ExportFile(object):
                     old_gps = gps
                 else:
                     old_gps = imageutils.GpsLocation()
-                su.pout("Updating IPTC for %s because of GPS %s vs %s" %
-                        (export_file, old_gps.to_string(),
-                         self.photo.gps.to_string()))
+                messages.append(u'  File GPS:   %s' % (old_gps.to_string()))
+                messages.append(u'  iPhoto GPS: %s' % (self.photo.gps.to_string()))
                 new_gps = self.photo.gps
 
         # Don't export the faces into the original file (could have been
@@ -375,8 +383,9 @@ class ExportFile(object):
             export_file, region_rectangles, region_names, do_faces)
 
         if (new_caption != None or new_keywords != None or new_date or
-            new_gps or new_rating != -1 or new_rectangles or new_persons):
-            if not options.dryrun:
+            new_gps or new_rating != -1 or new_rectangles != None or new_persons != None):
+            su.pout(u'Updating IPTC for %s because of\n%s' % (export_file, u'\n'.join(messages)))
+            if (file_updated or imageutils.should_update(options)) and not options.dryrun:
                 exiftool.update_iptcdata(export_file, new_caption, new_keywords,
                                          new_date, new_rating, new_gps,
                                          new_rectangles, new_persons)
@@ -693,6 +702,9 @@ def export_iphoto(library, data, excludes, options):
     """Main routine for exporting iPhoto images."""
 
     print "Scanning iPhoto data for photos to export..."
+    if options.verbose:
+        data.check_photos()
+
     if options.events:
         library.process_albums(data.root_album.albums, ["Event"], u'',
                                options.events, excludes, options)
@@ -792,6 +804,12 @@ def get_option_parser():
       help="""Use links instead of copying files. Use with care, as changes made
       to the exported files might affect the image that is stored in the iPhoto
       library.""")
+    p.add_option("--max_create", type='int', default=-1,
+                 help='Maximum number of images to create.')
+    p.add_option("--max_delete", type='int', default=-1,
+                 help='Maximum number of images to delete.')
+    p.add_option("--max_update", type='int', default=-1,
+                 help='Maximum number of images to update.')
     p.add_option(
       "-n", "--nametemplate", default="{title}",
       help="""Template for naming image files. Default: "{title}".""")
@@ -799,9 +817,13 @@ def get_option_parser():
                       help="Export original files into Originals.")
     p.add_option("--picasa", action="store_true",
                       help="Store originals in .picasaoriginals")
+    p.add_option('--picasaweb',
+                 help="""Export to PicasaWeb albums of specified user
+                 (available in future version of Phoshare).""")
     p.add_option("--pictures", action="store_false", dest="movies",
                  default=True,
                  help="Export pictures only (no movies).")
+
     p.add_option(
       "--size", type='int', help="""Resize images so that neither width or
       height exceeds this size. Converts all images to jpeg.""")
@@ -820,6 +842,17 @@ def get_option_parser():
     p.add_option('--version', action='store_true', 
                  help='Print build version and exit.')
     return p
+
+def check_aperture_mode(options, parser):
+    """Checks use of options with Aperture library."""
+    if options.folderhints:
+        parser.error("--folderhints not supported with Aperture - use "
+                     "Folders.")
+    if options.iptc > 0 and options.link:
+        # With Aperture, we cannot modify the preview files, as they get
+        # regenerated automatically by Aperture.
+        parser.error("Cannot use --iptc and --link together with an "
+                     "Aperture library.")
 
 def run_phoshare(cmd_args):
     """main routine for phoshare."""
@@ -845,7 +878,7 @@ def run_phoshare(cmd_args):
         parser.error("Need to specify the iPhoto library with the --iphoto "
                      "option.")
 
-    if options.export or options.checkalbumsize:
+    if options.export or options.picasaweb or options.checkalbumsize:
         if not (options.albums or options.events or options.smarts or
                 options.facealbums):
             parser.error("Need to specify at least one event, album, or smart "
@@ -855,14 +888,20 @@ def run_phoshare(cmd_args):
         parser.error("No action specified. Use --export to export from your "
                      "iPhoto library.")
 
+
     logging_handler = logging.StreamHandler()
     logging_handler.setLevel(logging.DEBUG if options.verbose else logging.INFO)
     _logger.addHandler(logging_handler)
 
     album_xml_file = iphotodata.get_album_xmlfile(
         su.expand_home_folder(options.iphoto))
-    data = iphotodata.get_iphoto_data(album_xml_file)
- 
+    data = iphotodata.get_iphoto_data(album_xml_file, verbose=options.verbose)
+    if data.aperture:
+        check_aperture_mode(options, parser)
+        if options.originals and options.export:
+            data.load_aperture_originals()
+        
+    options.aperture = data.aperture and not data.aperture_data
     options.foldertemplate = unicode(options.foldertemplate)
     options.nametemplate = unicode(options.nametemplate)
     options.captiontemplate = unicode(options.captiontemplate)
@@ -873,6 +912,7 @@ def run_phoshare(cmd_args):
     if options.export:
         album = ExportLibrary(su.expand_home_folder(options.export))
         export_iphoto(album, data, options.exclude, options)
+
 
 def main():
     run_phoshare(sys.argv[1:])
