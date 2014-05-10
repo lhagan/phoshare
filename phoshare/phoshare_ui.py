@@ -733,10 +733,12 @@ Metadata options will be disabled if exiftool is not available.""")
             self.link = False
             self.dryrun = False
             self.folderhints = False
+            self.folderpatterns = None
             self.captiontemplate = u'{description}'
             self.foldertemplate = u'{name}'
             self.nametemplate = u'{title}'
             self.aperture = False # TODO
+            self.reverse = False # TODO
             self.size = ''  # TODO
             self.picasa = False  # TODO
             self.movies = True  # TODO
@@ -748,6 +750,7 @@ Metadata options will be disabled if exiftool is not available.""")
             self.facealbums = False
             self.facealbum_prefix = ''
             self.face_keywords = False
+            self.ratings = '' # TODO
             self.verbose = False
 
         def load(self):
@@ -786,6 +789,8 @@ Metadata options will be disabled if exiftool is not available.""")
                 self.nametemplate = unicode(config.get(s, 'captiontemplate'))
             if config.has_option(s, 'nametemplate'):
                 self.nametemplate = unicode(config.get(s, 'nametemplate'))
+            if config.has_option(s, 'reverse'):
+                self.reverse = config.getboolean(s, 'reverse')
             if config.has_option(s, 'size'):
                 self.size = config.get(s, 'size')
             if config.has_option(s, 'picasa'):
@@ -831,6 +836,7 @@ Metadata options will be disabled if exiftool is not available.""")
             config.set(s, 'folderhints', self.folderhints)
             config.set(s, 'captiontemplate', self.captiontemplate)
             config.set(s, 'nametemplate', self.nametemplate)
+            config.set(s, 'reverse', self.reverse)
             config.set(s, 'size', self.size)
             config.set(s, 'picasa', self.picasa)
             config.set(s, 'movies', self.movies)

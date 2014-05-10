@@ -21,11 +21,9 @@ import os
 import re
 import sys
 import time
-import traceback
 import unicodedata
 
 from optparse import OptionParser
-from Carbon.File import FSResolveAliasFile
 import MacOS
 
 import appledata.iphotodata as iphotodata
@@ -58,7 +56,7 @@ def region_matches(region1, region2):
     if len(region1) != len(region2):
         return False
     for i in xrange(len(region1)):
-        if abs(region1[i] - region2[i]) > 0.0000001:
+        if abs(region1[i] - region2[i]) > 0.0000005:
             return False
     return True
 
@@ -92,22 +90,13 @@ def delete_album_file(album_file, albumdirectory, msg, options):
                                                           ex)
     return False
 
-def resolve_alias(path):
-    """Resolves a path to point to the real file if it is a file system alias.
-    """
-    try:
-        fs, _, _ = FSResolveAliasFile(path, 1)
-        return su.fsdec(fs.as_pathname())
-    except (OSError, MacOS.Error) as ose:
-        su.pout(u"Failed to resolve alias for %s." % (path))
-        return path
-        
 class ExportFile(object):
     """Describes an exported image."""
 
-    def __init__(self, photo, export_directory, base_name, options):
+    def __init__(self, photo, container, export_directory, base_name, options):
         """Creates a new ExportFile object."""
         self.photo = photo
+        self.container = container
         # We cannot resize movie files.
         if options.size and not imageutils.is_movie_file(photo.image_path):
             self.size = options.size
@@ -145,14 +134,33 @@ class ExportFile(object):
         """
         if not os.path.exists(self.export_file):
             return True
-        if (os.path.getmtime(self.export_file) + _MTIME_FUDGE <
+        # In link mode, check the inode.
+        if options.link:
+            export_stat = os.stat(self.export_file)
+            source_stat = os.stat(source_file)
+            if export_stat.st_ino != source_stat.st_ino:
+                su.pout('Changed:  %s: inodes don\'t match: %d vs. %d' %
+                    (self.export_file, export_stat.st_ino, source_stat.st_ino))
+                return True
+        if (not options.reverse
+            and os.path.getmtime(self.export_file) + _MTIME_FUDGE <
             os.path.getmtime(source_file)):
             su.pout('Changed:  %s: newer version is available: %s vs. %s' %
                     (self.export_file,
                      time.ctime(os.path.getmtime(self.export_file)),
                      time.ctime(os.path.getmtime(source_file))))
             return True
-        if not self.size:
+
+        if (options.reverse
+            and os.path.getmtime(source_file) + _MTIME_FUDGE <
+            os.path.getmtime(self.export_file)):
+            su.pout('Changed:  %s: newer version is available: %s vs. %s' %
+                    (self.export_file,
+                     time.ctime(os.path.getmtime(source_file)),
+                     time.ctime(os.path.getmtime(self.export_file))))
+            return True
+        
+        if not self.size and not options.reverse:
             # With creative renaming in iPhoto it is possible to get
             # stale files if titles get swapped between images. Double
             # check the size, allowing for some difference for meta data
@@ -164,6 +172,19 @@ class ExportFile(object):
                 su.pout('Changed:  %s: file size: %d vs. %d' %
                         (self.export_file, export_size, source_size))
                 return True
+
+        # In reverse mode, we don't check the file size (might have changed because
+        # of Preview regeneration), so we look at the image dimensions instead to catch
+        # some out-of-sync images.
+        if options.reverse and su.getfileextension(self.export_file) in _EXIF_EXTENSIONS:
+            (source_width, source_height) = imageutils.get_image_width_height(source_file)
+            (export_width, export_height) = imageutils.get_image_width_height(self.export_file)
+            if ((source_width and export_width and source_width != export_width) or
+                (source_height and export_height and source_height != export_height)):
+                su.pout('Changed:  %s: dimensions: %dx%d vs. %dx%d' % (
+                    self.export_file, source_width, source_height, export_width, export_height))
+                return True
+
         # In link mode, we don't need to check the modification date in the
         # database because we catch the changes by the size check above.
         #if (not options.link and
@@ -184,8 +205,16 @@ class ExportFile(object):
             su.pout("Creating folder " + export_dir)
             if not options.dryrun:
                 os.mkdir(export_dir)
-        original_source_file = resolve_alias(self.photo.originalpath)
+        original_source_file = su.resolve_alias(self.photo.originalpath)
         if os.path.exists(self.original_export_file):
+            # In link mode, check the inode.
+            if options.link:
+                export_stat = os.stat(self.original_export_file)
+                source_stat = os.stat(original_source_file)
+                if export_stat.st_ino != source_stat.st_ino:
+                    su.pout('Changed:  %s: inodes don\'t match: %d vs. %d' %
+                            (self.original_export_file, export_stat.st_ino, source_stat.st_ino))
+                    do_original_export = True
             if (os.path.getmtime(self.original_export_file) + _MTIME_FUDGE <
                 os.path.getmtime(original_source_file)):
                 su.pout('Changed:  %s: newer version is available: %s vs. %s' %
@@ -199,7 +228,7 @@ class ExportFile(object):
                 export_size = os.path.getsize(self.original_export_file)
                 diff = abs(source_size - export_size)
                 if diff > _MAX_FILE_DIFF or (diff > 0 and options.link):
-                    su.pout('Changed:  %s: file size: %d vs. %d' %
+                    su.pout(u'Changed:  %s: file size: %d vs. %d' %
                             (self.original_export_file,
                              export_size, source_size))
                     do_original_export = True
@@ -209,8 +238,9 @@ class ExportFile(object):
         do_iptc = (options.iptc == 1 and
                    do_original_export) or options.iptc == 2
         if do_iptc and (options.link or options.iptc_masters):
-            self.check_iptc_data(original_source_file, options,
-                                 is_original=True, file_updated=do_original_export)
+            if self.check_iptc_data(original_source_file, options,
+                                    is_original=True, file_updated=do_original_export):
+                do_original_export = True
         exists = True  # True if the file exists or was updated.
         if do_original_export:
             exists = imageutils.copy_or_link_file(original_source_file,
@@ -229,7 +259,7 @@ class ExportFile(object):
         """makes sure all files exist in other album, and generates if
            necessary."""
         try:
-            source_file = resolve_alias(self.photo.image_path)
+            source_file = su.resolve_alias(self.photo.image_path)
             do_export = self._check_need_to_export(source_file, options)
 
             # if we use links, we update the IPTC data in the original file
@@ -260,28 +290,16 @@ class ExportFile(object):
             su.perr(u"Failed to export %s to %s: %s" % (self.photo.image_path, self.export_file,
                                                         ose))
 
-    def get_photo_rectangles(self):
-        """Gets a list of photo rectangles for the faces in this image."""
-        photo_rectangles = self.photo.face_rectangles
-        result = []
-        for photo_rectangle in photo_rectangles:
-            y = max(0.0, 1.0 - photo_rectangle[1] - photo_rectangle[3])
-            result.append((photo_rectangle[0],
-                           y,
-                           photo_rectangle[2],
-                           photo_rectangle[3]))
-        return result
-
-
     def get_export_keywords(self, do_face_keywords):
         """Returns the list of keywords that should be in the exported image."""
-        if not self.photo.keywords:
-            new_keywords = []
-        else:
-            new_keywords = self.photo.keywords[:]
+        new_keywords = []
+        if self.photo.keywords:
+            for keyword in self.photo.keywords:
+                if keyword and not keyword in new_keywords:
+                    new_keywords.append(keyword)
         if do_face_keywords:
             for keyword in self.photo.getfaces():
-                if not keyword in new_keywords:
+                if keyword and not keyword in new_keywords:
                     new_keywords.append(keyword)
         return new_keywords
 
@@ -293,7 +311,7 @@ class ExportFile(object):
         Returns: (new_rectangles, new_persons), or (None, None)
         """
         if do_faces:
-            photo_rectangles = self.get_photo_rectangles()
+            photo_rectangles = self.photo.face_rectangles
             photo_faces = self.photo.faces
         else:
             photo_rectangles = []
@@ -308,6 +326,9 @@ class ExportFile(object):
         if len(region_rectangles) != len(photo_rectangles):
             messages.append(u'  Number of regions (%d vs %d)' %
                     (len(region_rectangles), len(photo_rectangles)))
+            #su.pout('%s vs %s' % (combined_region_names, combined_photo_faces))
+            #su.pout('%s vs %s' % (region_rectangles, photo_rectangles))
+            
             return (photo_rectangles, photo_faces)
 
         for p in xrange(len(region_rectangles)):
@@ -328,14 +349,12 @@ class ExportFile(object):
             return False
         messages = []
 
-        (file_keywords, file_caption, date_time_original, rating, gps,
-         region_rectangles, region_names) = exiftool.get_iptc_data(
-            export_file)
+        iptc_data = exiftool.get_iptc_data(export_file)
          
-        new_caption = imageutils.get_photo_caption(self.photo,
+        new_caption = imageutils.get_photo_caption(self.photo, self.container,
                                                    options.captiontemplate)
-        if not su.equalscontent(file_caption, new_caption):
-            messages.append(u'  File caption:   %s' % (su.nn_string(file_caption).strip()))
+        if not su.equalscontent(iptc_data.caption, new_caption):
+            messages.append(u'  File caption:   %s' % (su.nn_string(iptc_data.caption).strip()))
             messages.append(u'  iPhoto caption: %s' % (new_caption))
         else:
             new_caption = None
@@ -345,34 +364,39 @@ class ExportFile(object):
         new_rating = -1
         if not options.aperture:
             new_keywords = self.get_export_keywords(options.face_keywords)
-            if not imageutils.compare_keywords(new_keywords, file_keywords):
-                messages.append(u'  File keywords:   %s' % (u','.join(file_keywords)))
-                messages.append(u'  iPhoto keywords: %s' % (u','.join(new_keywords)))
+            if not imageutils.compare_keywords(new_keywords, iptc_data.keywords):
+                messages.append(u'  File keywords:   %s' % (u','.join(iptc_data.keywords)))
+                if new_keywords == None:
+                    messages.append(u'  iPhoto keywords: <None>')
+                else:
+                    messages.append(u'  iPhoto keywords: %s' % (u','.join(new_keywords)))
             else:
                 new_keywords = None
 
-            if self.photo.date and date_time_original != self.photo.date:
-                messages.append(u'  File date:   %s' % (date_time_original))
-                messages.append(u'  iPhoto date: %s' % (self.photo.date))
-                new_date = self.photo.date
+            #if self.photo.date and date_time_original != self.photo.date:
+            #    messages.append(u'  File date:   %s' % (date_time_original))
+            #    messages.append(u'  iPhoto date: %s' % (self.photo.date))
+            #    new_date = self.photo.date
  
-            if self.photo.rating != None and rating != self.photo.rating:
-                messages.append(u'  File rating:   %d' % (rating))
+            if self.photo.rating != None and iptc_data.rating != self.photo.rating:
+                messages.append(u'  File rating:   %d' % (iptc_data.rating))
                 messages.append(u'  iPhoto rating: %d' % (self.photo.rating))
                 new_rating = self.photo.rating
         else:
             if options.face_keywords:
-                merged_keywords = file_keywords[:]
+                merged_keywords = iptc_data.keywords[:]
                 for keyword in self.photo.getfaces():
                     if not keyword in merged_keywords:
                         merged_keywords.append(keyword)
                         new_keywords = merged_keywords
- 
+
+        if iptc_data.hierarchical_subject and not options.reverse:
+            messages.append(u'  File subjects:   %s' % (u','.join(iptc_data.hierarchical_subject)))
         new_gps = None
         if options.gps and self.photo.gps:
-            if (not gps or not self.photo.gps.is_same(gps)):
-                if gps:
-                    old_gps = gps
+            if (not iptc_data.gps or not self.photo.gps.is_same(iptc_data.gps)):
+                if iptc_data.gps:
+                    old_gps = iptc_data.gps
                 else:
                     old_gps = imageutils.GpsLocation()
                 messages.append(u'  File GPS:   %s' % (old_gps.to_string()))
@@ -383,15 +407,17 @@ class ExportFile(object):
         # cropped).
         do_faces = options.faces and not is_original
         (new_rectangles, new_persons) = self._check_person_iptc_data(
-            export_file, region_rectangles, region_names, do_faces, messages)
+            export_file, iptc_data.region_rectangles, iptc_data.region_names, do_faces, messages)
 
         if (new_caption != None or new_keywords != None or new_date or
+            (not options.reverse and iptc_data.hierarchical_subject) or
             new_gps or new_rating != -1 or new_rectangles != None or new_persons != None):
             su.pout(u'Updating IPTC for %s because of\n%s' % (export_file, u'\n'.join(messages)))
             if (file_updated or imageutils.should_update(options)) and not options.dryrun:
                 exiftool.update_iptcdata(export_file, new_caption, new_keywords,
                                          new_date, new_rating, new_gps,
-                                         new_rectangles, new_persons)
+                                         new_rectangles, new_persons, iptc_data.image_width,
+                                         iptc_data.image_height, hierarchical_subject=[])
             return True
         return False
 
@@ -426,7 +452,7 @@ class ExportDirectory(object):
                     entries,
                     str(entries).zfill(entry_digits),
                     template)
-                picture_file = ExportFile(image, self.albumdirectory,
+                picture_file = ExportFile(image, self.iphoto_container, self.albumdirectory,
                                           image_basename, options)
                 self.files[image_basename] = picture_file
 
@@ -578,7 +604,14 @@ class ExportLibrary(object):
         exclude_pattern = None
         if excludes:
             exclude_pattern = re.compile(su.unicode_string(excludes))
-
+            
+        # Figure out the folder patterns (if any)
+        folderpatterns = []
+        if options.folderpatterns:
+            for pattern in su.unicode_string(options.folderpatterns).split(','):
+                (expression, folder) = pattern.split('/', 2)
+                folderpatterns.append((re.compile(expression), folder))
+                
         # first, do the sub-albums
         for sub_album in albums:
             if self._check_abort():
@@ -587,7 +620,7 @@ class ExportLibrary(object):
             if not sub_name:
                 print "Found an album with no name: " + sub_album.albumid
                 sub_name = "xxx"
-
+            
             # check the album type
             if sub_album.albumtype == "Folder" or sub_album.albums:
                 sub_matched = matched
@@ -616,13 +649,23 @@ class ExportLibrary(object):
             _logger.debug(u'Loading "%s".', sub_name)
 
             folder_hint = None
-            if options.folderhints:
+            if sub_name.find('/') != -1:
+                (folder_hint, sub_name) = sub_name.split('/', 2)
+            if not folder_hint and options.folderhints:
                 folder_hint = sub_album.getfolderhint()
+            if not folder_hint and folderpatterns:
+                for (pattern, folder) in folderpatterns:
+                    if pattern.match(sub_album.name):
+                        if options.verbose:
+                            su.pout("Using folder %s for album %s." % (folder, sub_album.name))
+                        folder_hint = folder
+                        break
+          
             prefix = folder_prefix
             if folder_hint is not None:
                 prefix = prefix + imageutils.make_foldername(folder_hint) + "/"
             formatted_name = imageutils.format_album_name(
-                sub_album, options.foldertemplate)
+                sub_album, sub_name, options.foldertemplate)
             sub_name = prefix + imageutils.make_foldername(formatted_name)
             sub_name = self._find_unused_folder(sub_name)
 
@@ -748,6 +791,9 @@ def get_option_parser():
         help="""Export matching regular albums. The argument
         is a regular expression. Use -a . to export all regular albums.""")
     p.add_option(
+        "--aperture",
+        help="""Treat library as Aperture library.""")
+    p.add_option(
         '--captiontemplate', default='{description}',
       help='Template for IPTC image captions. Default: "{description}".')
     p.add_option(
@@ -780,6 +826,10 @@ def get_option_parser():
                  help="Copy faces into metadata.")
     p.add_option("--folderhints", dest="folderhints", action="store_true",
                  help="Scan event and album descriptions for folder hints.")
+    p.add_option("--folderpatterns", 
+                 help="""List of regular expressions and folder names, for
+                 mapping events and albums to folers. Format is
+                 <pattern1>/<folder1>,<pattern2>/<folder2>,...""")
     p.add_option("--foldertemplate", default="{name}",
                  help="""Template for naming folders. Default: "{name}".""")
     p.add_option("--gps", action="store_true",
@@ -823,13 +873,19 @@ def get_option_parser():
                       help="Export original files into Originals.")
     p.add_option("--picasa", action="store_true",
                       help="Store originals in .picasaoriginals")
+    p.add_option('--picasapassword',
+                 help='PicasaWeb password (optional).')
     p.add_option('--picasaweb',
                  help="""Export to PicasaWeb albums of specified user
                  (available in future version of Phoshare).""")
     p.add_option("--pictures", action="store_false", dest="movies",
                  default=True,
                  help="Export pictures only (no movies).")
-
+    p.add_option("--ratings",
+                 help="""Only export pictures with matching rating (comma separate list)""")
+    p.add_option("--reverse",
+                 help="""Reverse sync mode - check if changes in the export folders need to
+                 be sync'ed back to the library. Implies --dryrun.""")
     p.add_option(
       "--size", type='int', help="""Resize images so that neither width or
       height exceeds this size. Converts all images to jpeg.""")
@@ -854,11 +910,11 @@ def check_aperture_mode(options, parser):
     if options.folderhints:
         parser.error("--folderhints not supported with Aperture - use "
                      "Folders.")
-    if options.iptc > 0 and options.link:
-        # With Aperture, we cannot modify the preview files, as they get
-        # regenerated automatically by Aperture.
-        parser.error("Cannot use --iptc and --link together with an "
-                     "Aperture library.")
+    #if options.iptc > 0 and options.link:
+    #    # With Aperture, we cannot modify the preview files, as they get
+    #    # regenerated automatically by Aperture.
+    #    parser.error("Cannot use --iptc and --link together with an "
+    #                 "Aperture library.")
 
 def run_phoshare(cmd_args):
     """main routine for phoshare."""
@@ -894,6 +950,20 @@ def run_phoshare(cmd_args):
         parser.error("No action specified. Use --export to export from your "
                      "iPhoto library.")
 
+    if options.picasaweb:
+        if options.picasapassword:
+            google_password = options.picasapassword
+        else:
+            google_password = getpass.getpass('Google password for %s: ' %
+                                              options.picasaweb)
+
+    if options.ratings:
+        options.ratings = [int(r) for r in options.ratings.split(",")]
+
+    if options.reverse:
+        if not options.dryrun:
+            su.pout(u"Turning on dryrun mode because of --reverse option.")
+        options.dryrun = True
 
     logging_handler = logging.StreamHandler()
     logging_handler.setLevel(logging.DEBUG if options.verbose else logging.INFO)
@@ -901,7 +971,8 @@ def run_phoshare(cmd_args):
 
     album_xml_file = iphotodata.get_album_xmlfile(
         su.expand_home_folder(options.iphoto))
-    data = iphotodata.get_iphoto_data(album_xml_file, verbose=options.verbose)
+    data = iphotodata.get_iphoto_data(album_xml_file, ratings=options.ratings,
+                                       verbose=options.verbose, aperture=options.aperture)
     if data.aperture:
         check_aperture_mode(options, parser)
         if options.originals and options.export:
@@ -918,6 +989,13 @@ def run_phoshare(cmd_args):
     if options.export:
         album = ExportLibrary(su.expand_home_folder(options.export))
         export_iphoto(album, data, options.exclude, options)
+    if options.picasaweb:
+        try:
+            import phoshare.picasaweb as picasaweb
+            albums = picasaweb.PicasaAlbums(options.picasaweb, google_password)
+            export_iphoto(albums, data, options.exclude, options)
+        except ImportError:
+            su.perr('Sorry, this version of Phoshare does not support uploading to PicasaWeb.')
 
 
 def main():

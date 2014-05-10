@@ -24,6 +24,9 @@ import os
 import subprocess
 import sys
 import unicodedata
+import MacOS
+
+from Carbon.File import FSResolveAliasFile
 
 _sysenc = sys.getfilesystemencoding()
 
@@ -34,6 +37,16 @@ class _NullHandler(logging.Handler):
 _logger = logging.getLogger("google.systemutils")
 _logger.addHandler(_NullHandler())
 
+def resolve_alias(path):
+    """Resolves a path to point to the real file if it is a file system alias.
+    """
+    try:
+        fs, _, _ = FSResolveAliasFile(path, 1)
+        return fsdec(fs.as_pathname())
+    except (OSError, MacOS.Error) as ose:
+        pout(u"Failed to resolve alias for %s." % (path))
+        return path
+        
 def execandcombine(command):
     """execute a shell command, and return all output in a single string."""
     data = execandcapture(command)

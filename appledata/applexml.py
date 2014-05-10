@@ -15,21 +15,30 @@
 #   limitations under the License.
    
 import calendar
+import datetime
 import unicodedata
-from datetime import datetime
+import sys
 from xml import sax
 
 import tilutil.systemutils as su
 
 APPLE_BASE = calendar.timegm((2001, 1, 1, 0, 0, 0, 0, 0, -1))
+APPLE_BASE2 = datetime.datetime.fromtimestamp(calendar.timegm((2001, 1, 1, 0, 0, 0)))
+
 
 def getappletime(value):
     '''Converts a numeric Apple time stamp into a date and time'''
     try:
-        return datetime.fromtimestamp(APPLE_BASE + float(value))
-    except ValueError, _e:
+        # datetime.datetime.fromtimestamp() takes only int, which limits it to 12/13/1901
+        # as the earliest possible date. Use an alternate calculation for earlier dates.
+        # This one however adjusts for daylight savings time, so summer times are off by an
+        # hour from the time recorded in iPhoto.
+        if APPLE_BASE + float(value) < -sys.maxint:
+            return APPLE_BASE2 + datetime.timedelta(seconds=float(value))
+        return datetime.datetime.fromtimestamp(APPLE_BASE + float(value))
+    except (TypeError, ValueError) as _e:
         # bad time stamp in database, default to "now"
-        return datetime.now()
+        return datetime.datetime.now()
 
 class AppleXMLResolver(sax.handler.EntityResolver): #IGNORE:W0232
     '''Helper to deal with XML entity resolving'''

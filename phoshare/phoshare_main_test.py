@@ -23,26 +23,21 @@ class PhoshareMainTest(unittest.TestCase):
 
     def test_region_matches(self):
         """Tests phoshare_main.region_matches."""
-        max_same = 0.00000009
+        max_same = 0.00000049
         self.assertTrue(pm.region_matches([], []))
         self.assertTrue(pm.region_matches([1, 2, 3, 4], [1, 2, 3, 4]))
         self.assertTrue(pm.region_matches([1, 2, 3, 4],
-                                                [1.0 + max_same,
-                                                 2.0 + max_same,
-                                                 3.0 + max_same,
-                                                 4.0 + max_same]))
+                                          [1.0 + max_same,
+                                           2.0 + max_same,
+                                           3.0 + max_same,
+                                           4.0 + max_same]))
         
         self.assertFalse(pm.region_matches([1, 2, 3, 4],
-                                                 [1, 2, 3, 4.00000011]))
+                                           [1, 2, 3, 4.0 + max_same * 2]))
         self.assertFalse(pm.region_matches([1, 2, 3, 4], [1, 2, 3, 5]))
         self.assertFalse(pm.region_matches([1, 2, 3], [1, 2, 3, 4]))
         self.assertFalse(pm.region_matches([1, 2, 3], []))
         self.assertFalse(pm.region_matches([], [1, 2, 3]))
-
-    def test_resolve_alias(self):
-        """Tests phoshare_main.resolve_alias."""
-        self.assertEquals("/usr", pm.resolve_alias("/usr"))
-        self.assertEquals("/private/tmp", pm.resolve_alias("/tmp"))
 
 if __name__ == '__main__':
     unittest.main()

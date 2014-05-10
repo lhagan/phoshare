@@ -1,3 +1,3 @@
 """Phoshare version information."""
-PHOSHARE_VERSION = 'Phoshare 1.4.7'
-PHOSHARE_BUILD = 'Wed Jun 22 00:01:28 PDT 2011'
+PHOSHARE_VERSION = 'Phoshare 1.5.0'
+PHOSHARE_BUILD = 'Sun Sep 30 18:41:36 PDT 2012'

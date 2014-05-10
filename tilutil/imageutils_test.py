@@ -142,13 +142,13 @@ class ImageUtilsTest(unittest.TestCase):
         album = self.TestAlbum('nnnn', datetime.datetime(2010, 12, 26, 11, 33, 12))
         self.assertEqual(
             u'2010/12/26 hint nnnn',
-            iu.format_album_name(album, '{yyyy}/{mm}/{dd} {hint} {album}'))
+            iu.format_album_name(album, album.name, '{yyyy}/{mm}/{dd} {hint} {album}'))
         self.assertEqual(
             u'2010/12/26 hint nnnn',
-            iu.format_album_name(album, '{yyyy}/{mm}/{dd} {hint} {name}'))
+            iu.format_album_name(album, album.name, '{yyyy}/{mm}/{dd} {hint} {name}'))
 
         # Bad template.
-        self.assertEqual('{badfield}', iu.format_album_name(album, '{badfield}'))
+        self.assertEqual('{badfield}', iu.format_album_name(album, album.name, '{badfield}'))
         
 
     def test_format_photo_name(self):

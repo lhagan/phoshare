@@ -40,6 +40,7 @@ _IGNORE_LIST = ("pspbrwse.jbf", "thumbs.db", "desktop.ini",
                 "library.iphoto", "library6.iphoto", "caches")
 
 class _NullHandler(logging.Handler):
+    """A logging handler that doesn't emit anything."""
     def emit(self, record):
         pass
 
@@ -143,7 +144,11 @@ def make_image_filename(name):
 def is_image_file(file_name):
     """Tests if the file (name or full path) is an image file."""
     return su.getfileextension(file_name) in ("jpg", "jpeg", "tif", "png",
-                                              "nef")
+                                              "psd", "nef", "dng", "cr2")
+
+def is_sharable_image_file(file_name):
+    """Tests if the file (name or full path) is an image file in a format suitable for sharing."""
+    return su.getfileextension(file_name) in ("jpg", "jpeg", "tif", "png")
 
 def is_movie_file(file_name):
     """Tests if the file (name or full path) is a movie file."""
@@ -221,7 +226,7 @@ def resize_image(source, output, height_width_max, out_format='jpeg',
     # TODO(tilmansp): This has problems with non-ASCII output folders.
     args.extend([source, '--out', output])
     result = su.fsdec(su.execandcombine(args))
-    if result.find('Error') != -1 or result.find('Warning') != -1:
+    if result.find('Error') != -1 or result.find('Warning') != -1 or result.find('Trace') != -1:
         return result
     return None
 
@@ -235,6 +240,10 @@ def compare_keywords(new_keywords, old_keywords):
         True if the two lists contain the same keywords, ignoring trailing
         and leading whitespace, and order.
     """
+    if new_keywords == None:
+        new_keywords = []
+    if old_keywords == None:
+        old_keywords = []
     if len(new_keywords) != len(old_keywords):
         return False
     new_sorted = sorted([k.strip() for k in new_keywords])
@@ -332,6 +341,7 @@ def check_faces_in_caption(photo):
             return False
     return True
 
+# Obsolete
 def get_faces_left_to_right(photo):
     """Return a list of face names, sorted by appearance in the image from left to right."""
     faces = photo.getfaces()
@@ -343,33 +353,35 @@ def get_faces_left_to_right(photo):
         names[x] = faces[i]
     return [names[x] for x in sorted(names.keys())]
 
-def get_photo_caption(photo, caption_template):
+def get_photo_caption(photo, container, caption_template):
     """Gets the caption for a IPhotoImage photo, using a template. Supports:
        {caption} - the iPhoto caption (title).
        {description} - the iPhoto comment.
        {dated_caption_description} - the caption and comments from an
            IPhotoImage combined into a single string, nicely formatted like
            YYYY/MM/DD title: description.
+       {folder_description} - the iPhoto comment from the enclosing event, folder, or album
 
        Args:
          photo - an IPhotoImage photo.
          caption_template - a format string.
     """
     nodate_title_description = photo.caption
-    m = re.match(_CAPTION_PATTERN_INDEX, photo.caption)
-    if not m:
-        m = re.match(_CAPTION_PATTERN, photo.caption)
+    match = re.match(_CAPTION_PATTERN_INDEX, photo.caption)
+    if not match:
+        match = re.match(_CAPTION_PATTERN, photo.caption)
     else:
         # Strip off trailing index
         nodate_title_description = '%s%s%s %s' % (
-            m.group(1), m.group(2), m.group(3), m.group(4))
-    if m:
+            match.group(1), match.group(2), match.group(3), match.group(4))
+    if match:
         # Strip of leading date
         nodate_title_description = nodate_title_description[8:].strip()
     title_description = photo.caption
     if photo.comment:
         title_description += ': ' + photo.comment
         nodate_title_description += ': ' + photo.comment
+    folder_description = container.getcommentwithouthints().strip()
         
     if photo.date:
         year = str(photo.date.year)
@@ -380,7 +392,7 @@ def get_photo_caption(photo, caption_template):
         month = ''
         day = ''
 
-    names = get_faces_left_to_right(photo)
+    names = photo.getfaces()
     if names:
         face_list = '(%s)' % (', '.join(names))
     else:
@@ -389,7 +401,7 @@ def get_photo_caption(photo, caption_template):
     if check_faces_in_caption(photo):
         opt_face_list = ''
     else:
-        opt_face_list = '(%s)' % (', '.join(get_faces_left_to_right(photo)))
+        opt_face_list = '(%s)' % (', '.join(photo.getfaces()))
     
     try:
         return caption_template.format(
@@ -397,34 +409,36 @@ def get_photo_caption(photo, caption_template):
             description=photo.comment,
             title_description=title_description,
             nodate_title_description=nodate_title_description,
+            folder_description=folder_description,
             yyyy=year,
             mm=month,
             dd=day,
             face_list=face_list,
             opt_face_list=opt_face_list).strip()
-    except KeyError, e:
+    except KeyError, ex:
         su.pout(u'Unrecognized field in caption template: %s. Use one of: title, description, '
-                'title_description, yyyy, mm, dd.' % (str(e)))
+                'title_description, yyyy, mm, dd.' % (str(ex)))
         return caption_template
 
 _YEAR_PATTERN_INDEX = re.compile(r'([0-9][0-9][0-9][0-9]) (.*)')
 
-def format_album_name(album, folder_template):
+def format_album_name(album, name, folder_template):
     """Formats a folder name using a template.
 
        Args:
          album - an IPhotoContainer.
+         name - name of the album (typically from album.album_name)
          folder_template - a format string.
     """
-    name = album.name
+    if name is None:
+        name = ''
     ascii_name = name.encode('ascii', 'replace')
     plain_name = ascii_name.replace(' ', '')
-    if not album.name:
-        name = ''
+   
     nodate_name = name
-    m = re.match(_YEAR_PATTERN_INDEX, name)
-    if m:
-        nodate_name = m.group(2)
+    match = re.match(_YEAR_PATTERN_INDEX, name)
+    if match:
+        nodate_name = match.group(2)
 
     if album.date:
         year = str(album.date.year)
@@ -450,9 +464,9 @@ def format_album_name(album, folder_template):
             yyyy=year,
             mm=month,
             dd=day)
-    except KeyError, e:
+    except KeyError, ex:
         su.pout(u'Unrecognized field in folder template: %s. Use one of: name, ascii_name, '
-                'plain_name, hint, yyyy, mm, dd.' % (str(e)))
+                'plain_name, hint, yyyy, mm, dd.' % (str(ex)))
         return folder_template
 
     
@@ -474,13 +488,13 @@ def format_photo_name(photo, album_name, index, padded_index,
         month = ''
         day = ''
     nodate_album_name = album_name
-    m = re.match(_YEAR_PATTERN_INDEX, nodate_album_name)
-    if m:
-        nodate_album_name = m.group(2)
+    match = re.match(_YEAR_PATTERN_INDEX, nodate_album_name)
+    if match:
+        nodate_album_name = match.group(2)
     nodate_event_name = photo.event_name
-    m = re.match(_YEAR_PATTERN_INDEX, nodate_event_name)
-    if m:
-        nodate_event_name = m.group(2)
+    match = re.match(_YEAR_PATTERN_INDEX, nodate_event_name)
+    if match:
+        nodate_event_name = match.group(2)
 
     ascii_title = orig_basename.encode('ascii', 'replace')
     plain_title = ascii_title.replace(' ', '')
@@ -509,10 +523,10 @@ def format_photo_name(photo, album_name, index, padded_index,
                                               yyyy=year,
                                               mm=month,
                                               dd=day)
-    except KeyError, e:
+    except KeyError, ex:
         su.pout(u'Unrecognized field in name template: %s. Use one of: index, index0, event_index, '
                 'event_index0, album, ascii_album, event, ascii_event, title, ascii_title, '
-                'yyyy, mm, or dd.' % (str(e)))
+                'yyyy, mm, or dd.' % (str(ex)))
         formatted_name = name_template
         
     # Take out invalid characters, like '/'
@@ -555,6 +569,102 @@ def copy_or_link_file(source, target, dryrun=False, link=False, size=None,
             _logger.debug(u'shutil.copy2(%s, %s)', source, target)
             shutil.copy2(source, target)
         return True
-    except (OSError, IOError) as e:
-        _logger.error(u'%s: %s' % (source, e))
+    except (OSError, IOError) as ex:
+        _logger.error(u'%s: %s' % (source, str(ex)))
     return False
+
+def get_missing_face_keywords(iptc_data, face_list=None):
+    """Checks if keywords need to be added for faces. Returns the keywords that need
+       to be added."""
+    missing_keywords = []
+    if face_list == None:
+        face_list = iptc_data.region_names
+    for name in face_list:
+        # Look for the full name or just the first name.
+        if name in iptc_data.keywords:
+            continue
+        parts = name.split(" ")
+        if len(parts) <= 1 or not parts[0] in iptc_data.keywords:
+            missing_keywords.append(name)
+    return missing_keywords
+
+def get_missing_face_hierarchical_keywords(iptc_data, face_list=None):
+    """Checks if keywords need to be added for faces. Returns the keywords that need
+       to be added."""
+    missing_keywords = []
+    if face_list == None:
+        face_list = iptc_data.region_names
+    for name in face_list:
+        # Look for the full name or just the first name.
+        if "People|" + name in iptc_data.hierarchical_subject:
+            continue
+        parts = name.split(" ")
+        if len(parts) <= 1 or not "People|" + parts[0] in iptc_data.hierarchical_subject:
+            missing_keywords.append("People|" + name)
+    return missing_keywords
+
+def get_face_caption_update(iptc_data, old_caption=None, face_list=None):
+    """Checks if the caption of an image needs to be updated to mention
+       all persons. Returns the new caption if it needs to be changed,
+       None otherwise."""
+    if old_caption == None:
+        old_caption = iptc_data.caption.strip() if iptc_data.caption else u''
+    new_caption = old_caption            
+
+    # See if everybody is mentioned
+    all_mentioned = True
+    if face_list == None:
+        face_list = iptc_data.region_names
+    for name in face_list:
+        parts = name.split(" ")
+        # Look for the full name or just the first name.
+        if (old_caption.find(name) == -1 and
+            (len(parts) <= 1 or old_caption.find(parts[0]) == -1)):
+            all_mentioned = False
+            break
+    if all_mentioned:
+        return None
+
+    new_suffix = '(' + ', '.join(face_list) + ')'
+    # See if the old caption ends with what looks like a list of names already.
+    if old_caption:
+        old_caption = _strip_old_names(old_caption, face_list)
+    if old_caption:
+        new_caption = old_caption + ' ' + new_suffix
+    else:
+        new_caption = new_suffix
+    return new_caption
+
+def _strip_old_names(caption, names):
+    """Strips off a "(name1, name2)" comment from the end of a caption if all the words
+       are names."""
+    if not caption.endswith(')'):
+        return caption
+    start = caption.rfind('(')
+    if start == -1:
+        return caption
+
+    # Check that all mentioned names are in the new list (we don't want to remove
+    # a comment if it mentions people that are not tagged)
+    substring = caption[start + 1:-1]
+    old_names = [n.strip() for n in substring.split(",")]
+
+    # Build a list of new names, using both the full name and just the first name.
+    new_names = names[:]
+    for name in names:
+        parts = name.split(" ")
+        if len(parts) > 1:
+            new_names.append(parts[0])
+
+    all_mentioned = True
+    for old_name in old_names:
+        if not old_name in new_names:
+            all_mentioned = False
+            break
+    if not all_mentioned:
+        return caption
+    # Yes, we got names, so lets strip it off.
+    new_caption = caption[:start].strip()
+    # Do it recursively in case we've added extra (...) sections before
+    return _strip_old_names(new_caption, names)
+
