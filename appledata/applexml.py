@@ -142,12 +142,21 @@ def read_applexml(filename):
     parser.parse(filename)
     return handler.gettopnode()
 
+def read_applexml_fixed(filename):
+    '''Reads the named file, and parses it as an Apple XML file. Returns the
+    top node. Replaces bad characters in the input file. Sometimes AlbumData.xml
+    contains 0x00 characters!'''
+    f = open(filename, buffering=16384)
+    data = f.read().replace('\000', '')
+    f.close()
+    return read_applexml_string(data)
+
 def read_applexml_string(data):
     '''Parses the data as Apple XML format. Returns the top node.'''
-    parser = sax.make_parser()
+    #parser = sax.make_parser()
     handler = AppleXMLHandler()
-    parser.setContentHandler(handler)
-    parser.setEntityResolver(AppleXMLResolver())
-    parser.parseString(data)
+    #parser.setContentHandler(handler)
+    #parser.setEntityResolver(AppleXMLResolver())
+    sax.parseString(data, handler)
     return handler.gettopnode()
 

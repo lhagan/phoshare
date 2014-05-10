@@ -41,6 +41,14 @@ _MAX_FILE_DIFF = 35000
 # Fudge factor for file modification times
 _MTIME_FUDGE = 3
 
+# List of extensions for image formats that support EXIF data. Sources:
+# - iPhoto help topic: About digital cameras that support RAW files
+# - Apple RAW Support listing: http://www.apple.com/aperture/specs/raw.html
+# - ExifTool supported formats (R/W only): http://www.sno.phy.queensu.ca/~phil/exiftool/#supported
+_EXIF_EXTENSIONS = ('3fr', 'arw', 'ciff', 'cr2', 'crw', 'dcr', 'erf', 'jpg', 'k25', 'kdc', 'nef',
+                    'nef', 'nrw', 'orf', 'pef', 'png', 'raf', 'raw', 'rw2', 'rwl', 'sr2', 'srf',
+                    'srw', 'tif', 'tiff')
+
 _logger = logging.getLogger('google')
 _logger.setLevel(logging.DEBUG)
 
@@ -99,9 +107,12 @@ class ExportFile(object):
     def __init__(self, photo, export_directory, base_name, options):
         """Creates a new ExportFile object."""
         self.photo = photo
-        if options.size:
-            extension = "jpg"
+        # We cannot resize movie files.
+        if options.size and not imageutils.is_movie_file(photo.image_path):
+            self.size = options.size
+            extension = 'jpg'
         else:
+            self.size = None
             extension = su.getfileextension(photo.image_path)
         self.export_file = os.path.join(
             export_directory, base_name + '.' + extension)
@@ -140,7 +151,7 @@ class ExportFile(object):
                      time.ctime(os.path.getmtime(self.export_file)),
                      time.ctime(os.path.getmtime(source_file))))
             return True
-        if not options.size:
+        if not self.size:
             # With creative renaming in iPhoto it is possible to get
             # stale files if titles get swapped between images. Double
             # check the size, allowing for some difference for meta data
@@ -182,7 +193,7 @@ class ExportFile(object):
                              self.original_export_file)),
                          time.ctime(os.path.getmtime(original_source_file))))
                 do_original_export = True
-            elif not options.size:
+            elif not self.size:
                 source_size = os.path.getsize(original_source_file)
                 export_size = os.path.getsize(self.original_export_file)
                 diff = abs(source_size - export_size)
@@ -205,7 +216,7 @@ class ExportFile(object):
                                                   self.original_export_file,
                                                   options.dryrun,
                                                   options.link,
-                                                  options.size,
+                                                  self.size,
                                                   options.update)
         else:
             _logger.debug(u'%s up to date.', self.original_export_file)
@@ -232,7 +243,7 @@ class ExportFile(object):
                                                       self.export_file,
                                                       options.dryrun,
                                                       options.link,
-                                                      options.size,
+                                                      self.size,
                                                       options.update)
             else:
                 _logger.debug(u'%s up to date.', self.export_file)
@@ -245,7 +256,7 @@ class ExportFile(object):
                 not self.photo.rotation_is_only_edit):
                 self._generate_original(options)
         except (OSError, MacOS.Error) as ose:
-            su.perr("Failed to export %s: %s" % (source_file, ose))
+            su.perr(u"Failed to export %s: %s" % (source_file, ose))
 
     def get_photo_rectangles(self):
         """Gets a list of photo rectangles for the faces in this image."""
@@ -311,8 +322,7 @@ class ExportFile(object):
     def check_iptc_data(self, export_file, options, is_original=False):
         """Tests if a file has the proper keywords and caption in the meta
            data."""
-        if not su.getfileextension(export_file) in ("jpg", "tif", "tiff",
-                                                    "png"):
+        if not su.getfileextension(export_file) in _EXIF_EXTENSIONS:
             return False
 
         (file_keywords, file_caption, date_time_original, rating, gps,
@@ -842,10 +852,10 @@ def check_aperture_mode(options, parser):
         parser.error("Cannot use --iptc and --link together with an "
                      "Aperture library.")
 
-def main():
+def run_phoshare(cmd_args):
     """main routine for phoshare."""
     parser = get_option_parser()
-    (options, args) = parser.parse_args()
+    (options, args) = parser.parse_args(cmd_args)
     if len(args) != 0:
         parser.error("Found some unrecognized arguments on the command line.")
 
@@ -911,6 +921,8 @@ def main():
                                         google_password)
         export_iphoto(albums, data, options.exclude, options)
 
+def main():
+    run_phoshare(sys.argv[1:])
 
 if __name__ == "__main__":
     main()

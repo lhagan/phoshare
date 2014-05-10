@@ -25,7 +25,6 @@ import traceback
 
 # pylint: disable-msg=W0614
 from Tkinter import *  #IGNORE:W0401
-from ttk import *
 
 import appledata.iphotodata as iphotodata
 import phoshare.phoshare_main as phoshare_main
@@ -50,6 +49,54 @@ def _int_from_bool(boolean_value):
         return 1
     return 0
 
+class Notebook(Frame):
+    """A widget for a tabbed panel. Doesn't look very good, and the new tkk.Notebook in Python 2.7.1
+    is unfortunately only available on Snow Leopard and newer. 
+    """
+
+    def __init__(self, master):
+        """Creates a new Notebook, as a Frame.
+
+        Args:
+          master: container for this Notebook.
+        """
+        Frame.__init__(self, master)
+        self.active_frame = None
+        self.frame_count = 0
+        self.choice = IntVar(0)
+        self.button_frame = Frame(self)
+        self.button_frame.pack(side=TOP, fill=BOTH)
+        self.tab_frame = Frame(self, borderwidth=2, relief=RIDGE)
+        self.tab_frame.pack(fill=BOTH)
+
+    def add_tab(self, text):
+        """Adds a new tab to the notebook.
+
+        Args:
+          text: text for button that selects this tab.
+        Returns: a Frame for the new tab.
+        """
+        frame = Frame(self.tab_frame)
+        b = Radiobutton(self.button_frame, text=text, indicatoron=False, variable=self.choice,
+                        value=self.frame_count, padx=5, pady=6, command=lambda: self.display(frame))
+        b.grid(row=0, column=self.frame_count)
+        if not self.active_frame:
+            frame.pack(fill=BOTH, expand=1)
+            self.active_frame = frame
+        self.frame_count += 1
+        return frame
+
+    def display(self, frame):
+        """Displays the frame. Must have been created with add_tab().
+
+        Args:
+          frame: the frame to display.
+        """
+        self.active_frame.forget()
+        frame.pack(fill=BOTH, expand=1)
+        self.active_frame = frame
+    
+        
 class HelpDialog(Toplevel):
     """Displays a help dialog, using a scrolled text area."""
 
@@ -68,7 +115,7 @@ class ExportApp(Frame):
 
     def __init__(self, master=None):
         """Initialize the app, setting up the UI."""
-        Frame.__init__(self, master, padding=10)
+        Frame.__init__(self, master, bd=10)
 
         top = self.winfo_toplevel()
         menu_bar = Menu(top)
@@ -271,6 +318,13 @@ http://code.google.com/p/phoshare""" % (phoshare_version.PHOSHARE_VERSION,
         smarts_entry = Entry(lf, textvariable=self.smarts)
         smarts_entry.grid(row=2, column=1, columnspan=3, sticky=EW)
 
+        # Fill up the tab so the size matches the other tabs (Notebook resizes when you switch tabs)
+        Label(lf, text="").grid(sticky=E)
+        Label(lf, text="").grid(sticky=E)
+        Label(lf, text="").grid(sticky=E)
+        Label(lf, text="").grid(sticky=E)
+        Label(lf, text="").grid(sticky=E)
+
     def _create_files_tab(self, files_tab):
         files_tab.columnconfigure(0, weight=1)
         # Export folder and options
@@ -326,6 +380,7 @@ http://code.google.com/p/phoshare""" % (phoshare_version.PHOSHARE_VERSION,
         (cf, lf) = self._add_section(metadata_tab, "Metadata", self.help_metadata)
         cf.grid(row=row, columnspan=2, stick=E+W)
         row += 1
+        lf.columnconfigure(0, weight=1)
         self.iptc_box = Checkbutton(lf,
                                     text=("Export metadata (descriptions, "
                                           "keywords, ratings, dates)"),
@@ -373,27 +428,30 @@ http://code.google.com/p/phoshare""" % (phoshare_version.PHOSHARE_VERSION,
         entry = Entry(lf, textvariable=self.face_albums_text)
         entry.grid(row=2, column=2, sticky=E+W)
 
+        # Fill up the tab so the size matches the other tabs (Notebook resizes when you switch tabs)
+        Label(lf, text="").grid(sticky=E)
+        Label(lf, text="").grid(sticky=E)
+        Label(lf, text="").grid(sticky=E)
+
+
     def create_widgets(self):
         """Builds the UI."""
         self.columnconfigure(0, weight=1)
         n = Notebook(self)
         n.grid(row=0, sticky=E+W+N+S)
 
-        library_tab = Frame(n)
-        n.add(library_tab, text='Library')
+        library_tab = n.add_tab('Library')
         self._create_library_tab(library_tab)
 
-        files_tab = Frame(n)
-        n.add(files_tab, text='Files')
+        files_tab = n.add_tab('Files')
         self._create_files_tab(files_tab)
 
-        metadata_tab = Frame(n)
-        n.add(metadata_tab, text='Metadata')
+        metadata_tab = n.add_tab('Metadata')
         self._create_metadata_tab(metadata_tab)
 
         self._create_button_bar(self, 1)
 
-        self.text = ScrolledText(self, borderwidth=4, relief=RIDGE, padx=4,
+        self.text = ScrolledText(self, borderwidth=2, relief=RIDGE, padx=4,
                                  pady=4)
         self.text.grid(row=2, column=0, sticky=E+W+N+S)
         self.rowconfigure(2, weight=1)
@@ -450,6 +508,8 @@ the format "{name}". Everything else in the template will be copied. Examples:
 
 Available place holders for folder names:
   {name} - name of the album or event.
+  {ascii_name} - name of the album or event, using only ASCII characters.
+  {plain_name} - name of the album or event, using only ASCII characters and on spaces.
   {hint} - folder hint (taken from line event or album description starting with
            @).
   {yyyy} - year of album or event date.
@@ -458,17 +518,23 @@ Available place holders for folder names:
 
 Available place holders for file names:
   {album} - name of album (or in the case of an event, the name of the event).
+  {ascii_album} - name of the album, using only ASCII characters.
+  {plain_album} - name of the album, using only ASCII characters and no spaces.
   {index} - number of image in album, starting at 1.
   {index0} - number of image in album, padded with 0s, so that all numbers have
              the same length.
   {event} - name of the event. In the case of an album, the name of the event
             to which the image belongs.
+  {ascii_event} - name of the event, using only ASCII characters.
+  {plain_event} - name of the event, using only ASCII characters and no spaces.
   {event_index} - number of image in the event, starting at 1. If the case of an
                   album, this number will be based on the event to which the
                   image belongs.
   {event_index0} - same as {event_index}, but padded with leading 0s so that all
                    values have the same length.
   {title} - image title.
+  {ascii_title} - image title, using only ASCII characters.
+  {plain_title} - image title, using only ASCII characters and no spaces.
   {yyyy} - year of image.
   {mm} - month of image (01 - 12).
   {dd} - day of image (01 - 31).
@@ -586,7 +652,7 @@ Metadata options will be disabled if exiftool is not available.""")
     def check_iphoto_library(self):
         self.valid_library = False
         self.enable_buttons()
-        self.iphoto_library_status.set("Checking library location...")
+        self.iphoto_library_status.set("Please wait, checking library location...")
         self.launch_export("library")
 
     def set_library_status(self, good, message):
@@ -610,8 +676,9 @@ Metadata options will be disabled if exiftool is not available.""")
 
     def browse_library(self):
         path = tkFileDialog.askopenfilename(title="Locate iPhoto Library")
-        self.iphoto_library.set(path)
-        self.check_iphoto_library()
+        if path:
+            self.iphoto_library.set(path)
+            self.check_iphoto_library()
 
     def browse_export(self):
         path = tkFileDialog.askdirectory(title="Locate Export Folder")
@@ -812,7 +879,13 @@ Metadata options will be disabled if exiftool is not available.""")
         try:
             # First, load the iPhoto library.
             library_path = su.expand_home_folder(self.iphoto_library.get())
-            album_xml_file = iphotodata.get_album_xmlfile(library_path)
+            album_xml_file = None
+            try:
+                album_xml_file = iphotodata.get_album_xmlfile(library_path)
+            except ValueError, e:
+                self.thread_queue.put(("done", (False, mode, str(e))))
+                return
+
             data = iphotodata.get_iphoto_data(album_xml_file)
             msg = "Version %s library with %d images" % (
                 data.applicationVersion, len(data.images))
@@ -902,6 +975,7 @@ Metadata options will be disabled if exiftool is not available.""")
             phoshare_main.export_iphoto(self.active_library, data, exclude,
                                         options)
             self.thread_queue.put(("done", (True, mode, '')))
+
         except Exception, e:  # IGNORE:W0703
             self.thread_queue.put(("done",
                                    (False, mode,

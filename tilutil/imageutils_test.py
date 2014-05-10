@@ -123,29 +123,29 @@ class ImageUtilsTest(unittest.TestCase):
         self.assertEqual('//', iu.get_photo_caption(image, '{yyyy}/{mm}/{dd}'))
 
         image.date = datetime.datetime(2010, 12, 26, 11, 33, 15)
-        self.assertEqual('2010/12/26',
-            iu.get_photo_caption(image, '{yyyy}/{mm}/{dd}'))
+        self.assertEqual('2010/12/26', iu.get_photo_caption(image, '{yyyy}/{mm}/{dd}'))
 
         image = self.TestImage('tttt', 'dddd')
-        self.assertEqual('tttt: dddd',
-                         iu.get_photo_caption(image, '{title_description}'))
+        self.assertEqual('tttt: dddd', iu.get_photo_caption(image, '{title_description}'))
 
         image = self.TestImage('tttt', '')
-        self.assertEqual(
-            'tttt', iu.get_photo_caption(image, '{title_description}'))
-        
+        self.assertEqual('tttt', iu.get_photo_caption(image, '{title_description}'))
+
+        # Bad template.
+        self.assertEqual('{badfield}', iu.get_photo_caption(image, '{badfield}'))
+
 
     def test_format_album_name(self):
-        album = self.TestAlbum('nnnn',
-                               datetime.datetime(2010, 12, 26, 11, 33, 12))
+        album = self.TestAlbum('nnnn', datetime.datetime(2010, 12, 26, 11, 33, 12))
         self.assertEqual(
             u'2010/12/26 hint nnnn',
-            iu.format_album_name(album,
-                                 '{yyyy}/{mm}/{dd} {hint} {album}'))
+            iu.format_album_name(album, '{yyyy}/{mm}/{dd} {hint} {album}'))
         self.assertEqual(
             u'2010/12/26 hint nnnn',
-            iu.format_album_name(album,
-                                 '{yyyy}/{mm}/{dd} {hint} {name}'))
+            iu.format_album_name(album, '{yyyy}/{mm}/{dd} {hint} {name}'))
+
+        # Bad template.
+        self.assertEqual('{badfield}', iu.format_album_name(album, '{badfield}'))
         
 
     def test_format_photo_name(self):
@@ -158,8 +158,10 @@ class ImageUtilsTest(unittest.TestCase):
             u'2010-12-26 aaaa eeee tttt 5 05 2 02',
             iu.format_photo_name(image, 'aaaa', 5, '05', 
                                  ('{yyyy}/{mm}-{dd} {album} {event} {title} '
-                                  '{index} {index0} {event_index} '
-                                  '{event_index0}')))
+                                  '{index} {index0} {event_index} {event_index0}')))
+        # Bad template
+        self.assertEqual(' badfield ', iu.format_photo_name(image, 'aaaa', 5, '05', '{badfield}'))
+
 
 if __name__ == "__main__":
     unittest.main()

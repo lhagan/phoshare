@@ -109,7 +109,7 @@ def is_image_file(file_name):
 
 def is_movie_file(file_name):
     """Tests if the file (name or full path) is a movie file."""
-    return su.getfileextension(file_name) in ("mov", "avi", "m4v", "mpg")
+    return su.getfileextension(file_name) in ("mov", "avi", "m4v", "mpg", "3pg")
 
 def is_media_file(file_name):
     """Tests if the file (name or full path) is either an image or a movie file
@@ -317,15 +317,19 @@ def get_photo_caption(photo, caption_template):
         year = ''
         month = ''
         day = ''
-
-    return caption_template.format(
-        title=photo.caption,
-        description=photo.comment,
-        title_description=title_description,
-        nodate_title_description=nodate_title_description,
-        yyyy=year,
-        mm=month,
-        dd=day)
+    try:
+        return caption_template.format(
+            title=photo.caption,
+            description=photo.comment,
+            title_description=title_description,
+            nodate_title_description=nodate_title_description,
+            yyyy=year,
+            mm=month,
+            dd=day)
+    except KeyError, e:
+        su.pout(u'Unrecognized field in caption template: %s. Use one of: title, description, '
+                'title_description, yyyy, mm, dd.' % (str(e)))
+        return caption_template
 
 _YEAR_PATTERN_INDEX = re.compile(r'([0-9][0-9][0-9][0-9]) (.*)')
 
@@ -337,13 +341,14 @@ def format_album_name(album, folder_template):
          folder_template - a format string.
     """
     name = album.name
+    ascii_name = name.encode('ascii', 'replace')
+    plain_name = ascii_name.replace(' ', '')
     if not album.name:
         name = ''
     nodate_name = name
     m = re.match(_YEAR_PATTERN_INDEX, name)
     if m:
         nodate_name = m.group(2)
-    
 
     if album.date:
         year = str(album.date.year)
@@ -358,14 +363,22 @@ def format_album_name(album, folder_template):
     if not folderhint:
         folderhint = ''
     
-    return folder_template.format(
-        album=name,
-        name=name,
-        nodate_album=nodate_name,
-        hint=folderhint,
-        yyyy=year,
-        mm=month,
-        dd=day)
+    try:
+        return folder_template.format(
+            album=name,
+            name=name,
+            ascii_name=ascii_name,
+            plain_name=plain_name,
+            nodate_album=nodate_name,
+            hint=folderhint,
+            yyyy=year,
+            mm=month,
+            dd=day)
+    except KeyError, e:
+        su.pout(u'Unrecognized field in folder template: %s. Use one of: name, ascii_name, '
+                'plain_name, hint, yyyy, mm, dd.' % (str(e)))
+        return folder_template
+
     
 def format_photo_name(photo, album_name, index, padded_index,
                       name_template):
@@ -393,18 +406,39 @@ def format_photo_name(photo, album_name, index, padded_index,
     if m:
         nodate_event_name = m.group(2)
 
-    formatted_name = name_template.format(index=index,
-                                          index0=padded_index,
-                                          event_index=photo.event_index,
-                                          event_index0=photo.event_index0,
-                                          album=album_name,
-                                          event=photo.event_name,
-                                          nodate_album=nodate_album_name,
-                                          nodate_event=nodate_event_name,
-                                          title=orig_basename,
-                                          yyyy=year,
-                                          mm=month,
-                                          dd=day)
+    ascii_title = orig_basename.encode('ascii', 'replace')
+    plain_title = ascii_title.replace(' ', '')
+    ascii_album_name = album_name.encode('ascii', 'replace')
+    plain_album_name = ascii_album_name.replace(' ', '')
+    ascii_event = photo.event_name.encode('ascii', 'replace')
+    plain_event = ascii_event.replace(' ', '')
+
+    try:
+        formatted_name = name_template.format(index=index,
+                                              index0=padded_index,
+                                              event_index=photo.event_index,
+                                              event_index0=photo.event_index0,
+                                              album=album_name,
+                                              ascii_album=ascii_album_name,
+                                              plain_album=plain_album_name,
+                                              event=photo.event_name,
+                                              ascii_event=ascii_event,
+                                              plain_event=plain_event,
+                                              nodate_album=nodate_album_name,
+                                              nodate_event=nodate_event_name,
+                                              title=orig_basename,
+                                              caption=orig_basename, # backward compatibility
+                                              ascii_title=ascii_title,
+                                              plain_title=plain_title,
+                                              yyyy=year,
+                                              mm=month,
+                                              dd=day)
+    except KeyError, e:
+        su.pout(u'Unrecognized field in name template: %s. Use one of: index, index0, event_index, '
+                'event_index0, album, ascii_album, event, ascii_event, title, ascii_title, '
+                'yyyy, mm, or dd.' % (str(e)))
+        formatted_name = name_template
+        
     # Take out invalid characters, like '/'
     return make_image_filename(formatted_name)
 
@@ -413,7 +447,7 @@ def copy_or_link_file(source, target, dryrun=False, link=False, size=None,
     """copies, links, or converts an image file."""
     try:
         if size:
-            mode = " (convert)"
+            mode = " (resize)"
         elif link:
             mode = " (link)"
             print source # TODO

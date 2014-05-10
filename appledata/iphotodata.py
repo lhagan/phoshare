@@ -617,7 +617,7 @@ def get_iphoto_data(album_xml_file):
     """reads the iPhoto database and converts it into an iPhotoData object."""
     library_dir = os.path.dirname(album_xml_file)
     print "Reading iPhoto database from " + library_dir + "..."
-    album_xml = applexml.read_applexml(album_xml_file)
+    album_xml = applexml.read_applexml_fixed(album_xml_file)
 
     data = IPhotoData(album_xml, album_xml_file.endswith('ApertureData.xml'))
     if data.aperture:
