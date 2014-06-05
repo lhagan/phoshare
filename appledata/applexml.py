@@ -19,6 +19,7 @@ import datetime
 import unicodedata
 import sys
 from xml import sax
+import sqlite3
 
 import tilutil.systemutils as su
 
@@ -139,32 +140,45 @@ class AppleXMLHandler(sax.handler.ContentHandler):
         '''Returns the root of the parsed data tree'''
         return self.top_node[0]
 
-
-def read_applexml(filename):
-    '''Reads the named file, and parses it as an Apple XML file. Returns the
-    top node.'''
-    parser = sax.make_parser()
-    handler = AppleXMLHandler()
-    parser.setContentHandler(handler)
-    parser.setEntityResolver(AppleXMLResolver())
-    parser.parse(filename)
-    return handler.gettopnode()
-
-def read_applexml_fixed(filename):
+def read_applexml(filename, sql_filename):
     '''Reads the named file, and parses it as an Apple XML file. Returns the
     top node. Replaces bad characters in the input file. Sometimes AlbumData.xml
     contains 0x00 characters!'''
     f = open(filename, buffering=16384)
     data = f.read().replace('\000', '')
     f.close()
-    return read_applexml_string(data)
+    return read_applexml_string(data, sql_filename)
 
-def read_applexml_string(data):
+def read_applexml_string(data, sql_filename):
     '''Parses the data as Apple XML format. Returns the top node.'''
     #parser = sax.make_parser()
     handler = AppleXMLHandler()
     #parser.setContentHandler(handler)
     #parser.setEntityResolver(AppleXMLResolver())
     sax.parseString(data, handler)
-    return handler.gettopnode()
+    album_xml = handler.gettopnode()
+    
+    if sql_filename:
+        # keywords are no longer available in XML
+        # quick hack to pull them out of the sqlite database instead
+        conn = sqlite3.connect(sql_filename)
+        c = conn.cursor()
+        photos = album_xml['Master Image List']
+        for key in photos:
+            photo = photos[key]
+        
+            if 'Keywords' not in photo:
+                photo['Keywords'] = []
+        
+            c.execute('select keywordId from RKKeywordForVersion where versionId is ?', (key,))
+            for keyword in c.fetchall():
+                if keyword:
+                    photo['Keywords'].append(keyword[0])
+    
+        album_xml['List of Keywords'] = {}
+        c.execute('select modelId, name from RKKeyword')
+        for keyword in c.fetchall():
+            album_xml['List of Keywords'][keyword[0]] = keyword[1]
+    
+    return album_xml
 

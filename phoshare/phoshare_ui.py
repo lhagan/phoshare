@@ -898,8 +898,15 @@ Metadata options will be disabled if exiftool is not available.""")
             except ValueError, e:
                 self.thread_queue.put(("done", (False, mode, str(e))))
                 return
+            
+            album_sql_file = None
+            try:
+                album_sql_file = iphotodata.get_album_sqlfile(library_path)
+            except ValueError, e:
+                self.thread_queue.put(("done", (False, mode, str(e))))
+                return
 
-            data = iphotodata.get_iphoto_data(album_xml_file)
+            data = iphotodata.get_iphoto_data(album_xml_file, album_sql_file)
             msg = "Version %s library with %d images" % (
                 data.applicationVersion, len(data.images))
             self.write(msg + '\n')

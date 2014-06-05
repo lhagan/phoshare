@@ -362,17 +362,18 @@ class ExportFile(object):
         new_keywords = None
         new_date = None
         new_rating = -1
-        if not options.aperture:
-            new_keywords = self.get_export_keywords(options.face_keywords)
-            if not imageutils.compare_keywords(new_keywords, iptc_data.keywords):
-                messages.append(u'  File keywords:   %s' % (u','.join(iptc_data.keywords)))
-                if new_keywords == None:
-                    messages.append(u'  iPhoto keywords: <None>')
-                else:
-                    messages.append(u'  iPhoto keywords: %s' % (u','.join(new_keywords)))
+        
+        new_keywords = self.get_export_keywords(options.face_keywords)
+        if not imageutils.compare_keywords(new_keywords, iptc_data.keywords):
+            messages.append(u'  File keywords:   %s' % (u','.join(iptc_data.keywords)))
+            if new_keywords == None:
+                messages.append(u'  iPhoto keywords: <None>')
             else:
-                new_keywords = None
-
+                messages.append(u'  iPhoto keywords: %s' % (u','.join(new_keywords)))
+        else:
+            new_keywords = None
+        
+        if not options.aperture:
             #if self.photo.date and date_time_original != self.photo.date:
             #    messages.append(u'  File date:   %s' % (date_time_original))
             #    messages.append(u'  iPhoto date: %s' % (self.photo.date))
@@ -957,7 +958,9 @@ def run_phoshare(cmd_args):
 
     album_xml_file = iphotodata.get_album_xmlfile(
         su.expand_home_folder(options.iphoto))
-    data = iphotodata.get_iphoto_data(album_xml_file, ratings=options.ratings,
+    album_sql_file = iphotodata.get_album_sqlfile(
+        su.expand_home_folder(options.iphoto))
+    data = iphotodata.get_iphoto_data(album_xml_file, album_sql_file, ratings=options.ratings,
                                        verbose=options.verbose, aperture=options.aperture)
     if options.originals and options.export:
         data.load_aperture_originals()

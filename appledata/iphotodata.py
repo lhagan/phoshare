@@ -117,7 +117,7 @@ class IPhotoData(object):
         self.face_albums = None
 
         # Master map of keywords
-        self.keywords = self.data2.get("List of Keywords")
+        self.keywords = self.data.get("List of Keywords")
 
         self.face_names = {}  # Master map of faces
         face_list = self.data.get("List of Faces")
@@ -812,16 +812,25 @@ def get_album_xmlfile(library_dir):
     raise ValueError, ("%s does not appear to be a valid iPhoto or Aperture "
                        "library location.") % (library_dir)
 
+def get_album_sqlfile(library_dir):
+    """Locates the iPhoto Library.apdb file."""
+    if os.path.exists(library_dir) and os.path.isdir(library_dir):
+        album_sql_file = os.path.join(library_dir, "Database", "apdb", "Library.apdb")
+        if os.path.exists(album_sql_file):
+            return album_sql_file
+    raise ValueError, ("%s does not appear to be a valid iPhoto "
+                       "library location.") % (library_dir)
 
-def get_iphoto_data(album_xml_file, ratings=None, verbose=False, aperture=False):
+
+def get_iphoto_data(album_xml_file, album_sql_file, ratings=None, verbose=False, aperture=False):
     """reads the iPhoto database and converts it into an iPhotoData object."""
     library_dir = os.path.dirname(album_xml_file)
     is_aperture = aperture or album_xml_file.endswith('ApertureData.xml')
     if verbose:
         print "Reading %s database from %s..." % (
             'Aperture' if is_aperture else 'iPhoto', album_xml_file)
-    album_xml = applexml.read_applexml_fixed(album_xml_file)
-
+    album_xml = applexml.read_applexml(album_xml_file, album_sql_file)
+    
     album_xml2 = None
     if is_aperture:
         try:
@@ -831,26 +840,28 @@ def get_iphoto_data(album_xml_file, ratings=None, verbose=False, aperture=False)
             aperture_data = None
     else:
         aperture_data = None
-    #    # Recent iPhoto versions write event and album data into
-    #    # iLifeShared/AlbumData2.xml.
-    #    album_xml_file2 = os.path.join(os.path.split(album_xml_file)[0],
-    #                                   "iLifeShared", "AlbumData2.xml")
-    #    if os.path.exists(album_xml_file2):
-    #        if verbose:
-    #            su.pout("Reading event and album data from %s..." % (album_xml_file2))
-    #        album_xml2 = applexml.read_applexml(album_xml_file2)
+        # Recent iPhoto versions write event and album data into
+        # iLifeShared/AlbumData2.xml.
+        album_xml_file2 = os.path.join(os.path.split(album_xml_file)[0],
+                                       "iLifeShared", "AlbumData2.xml")
+        if os.path.exists(album_xml_file2):
+            if verbose:
+                su.pout("Reading event and album data from %s..." % (album_xml_file2))
+            album_xml2 = applexml.read_applexml(album_xml_file2, None)
     
     application_version = album_xml.get("Application Version")
-        
-    if (application_version.startswith('3.')
-        or application_version.startswith('9.')):
-	is_aperture = True
+
     data = IPhotoData(album_xml, album_xml2, ratings, is_aperture, aperture_data)
-    if (not data.applicationVersion.startswith("9.") and
-        not data.applicationVersion.startswith("8.") and
-        not data.applicationVersion.startswith("7.") and
-        not data.applicationVersion.startswith("6.") and
-        not data.applicationVersion.startswith("3.")):
-            raise ValueError, "iPhoto/Aperture version %s not supported" % (
+    if is_aperture:
+        if (not data.applicationVersion.startswith('3.')
+            and not data.applicationVersion.startswith('9.')):
+            raise ValueError, "Aperture version %s not supported" % (
+                data.applicationVersion)
+    else:
+        if (not data.applicationVersion.startswith("9.") and
+            not data.applicationVersion.startswith("8.") and
+            not data.applicationVersion.startswith("7.") and
+            not data.applicationVersion.startswith("6.")):
+            raise ValueError, "iPhoto version %s not supported" % (
                 data.applicationVersion)
     return data
