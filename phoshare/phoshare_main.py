@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 """Reads iPhoto library info, and exports photos and movies."""
 
-# Copyright 2010 Google Inc.
+# Original work Copyright 2010 Google Inc.
+# Modified work Copyright 2014 Luke Hagan
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -14,6 +15,11 @@
 #   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
+
+# Modifications to original source by Luke Hagan:
+#
+#   2014-06-04: retrieve keywords from iPhoto database using sqlite
+#
 
 import getpass
 import logging
