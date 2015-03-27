@@ -1,3 +1,7 @@
+# Notice
+
+Due to Apple's discontinuation of iPhoto in favor of the new Photos app, I'm no longer maintaining this fork of phoshare.
+
 # Overview
 
 `phoshare` allows you to export and synchronize your iPhoto library to a folder tree. It preserves both the original and modified image, your event and album organization, and applies your iPhoto titles, descriptions, keywords, face tags, face rectangles, places, and ratings to the IPTC/EXIF metadata of your images. You can export a full copy of your library, or just build a tree of linked images that require very little additional disk space. You can re-run `phoshare` at any time to synchronize any changes made in iPhoto to your export tree quickly. `phoshare` works well with file-system based photo management tools like Picasa, Adobe Bridge, or Windows Live Photo Gallery.
